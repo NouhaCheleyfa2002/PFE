@@ -1,9 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Library, BookOpen, User, LogOut, GraduationCap } from "lucide-react";
-import { authService } from "@/lib/auth";
+import { authService, User as AuthUser } from "@/lib/auth";
 
 const NAV_ITEMS = [
   { icon: Library, label: "Library", href: "/student/library" },
@@ -13,7 +13,11 @@ const NAV_ITEMS = [
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const user = authService.getUser();
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    setUser(authService.getUser());
+  }, []);
 
   const handleLogout = () => {
     authService.logout();

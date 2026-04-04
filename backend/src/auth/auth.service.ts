@@ -1,16 +1,58 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException, Logger, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { User } from './interfaces/user.interface';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
   // In-memory user store (replace with database in production)
   private users: User[] = [];
 
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  async onModuleInit() {
+    await this.seedAdmin();
+  }
+
+  async seedAdmin(): Promise<void> {
+    const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
+    const adminPassword = this.configService.get<string>('ADMIN_PASSWORD');
+
+    if (!adminEmail || !adminPassword) {
+      this.logger.warn('ADMIN_EMAIL or ADMIN_PASSWORD not set – skipping admin seed');
+      return;
+    }
+
+    const existing = this.users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase());
+    if (existing) {
+      this.logger.log('Admin account already exists');
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
+    const admin: User = {
+      id: randomUUID(),
+      email: adminEmail.toLowerCase(),
+      password: hashedPassword,
+      fullName: 'Administrator',
+      role: 'admin',
+      verified: true,
+      createdAt: new Date(),
+    };
+    this.users.push(admin);
+    this.logger.log(`Admin account created: ${adminEmail}`);
+  }
+
+  getUsers(): Omit<User, 'password'>[] {
+    return this.users.map(({ password, ...u }) => u);
+  }
 
   async register(registerDto: RegisterDto): Promise<{ user: Omit<User, 'password'>; access_token: string }> {
     // Check if user already exists

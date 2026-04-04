@@ -14,7 +14,7 @@ export class RegisterDto {
   fullName: string;
 
   @IsIn(['teacher', 'student'])
-  role: 'teacher' | 'student';
+  role: 'teacher' | 'student'; // 'admin' is seeded only, not registerable
 
   @IsString()
   @IsOptional()

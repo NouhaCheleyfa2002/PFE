@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -13,11 +13,15 @@ import {
   Sparkles,
   ListChecks,
   BarChart2,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  ShieldCheck,
+  ClipboardList,
+  Users,
 } from "lucide-react";
+import { authService, User } from "@/lib/auth";
 
-/* ── nav config ─────────────────────────────────────────────────────────── */
-const NAV = [
+/* ── nav configs ─────────────────────────────────────────────────────────── */
+const TEACHER_NAV = [
   {
     section: "Main",
     items: [
@@ -44,10 +48,41 @@ const NAV = [
   },
 ];
 
+const ADMIN_NAV = [
+  {
+    section: "Overview",
+    items: [
+      { label: "Dashboard",    href: "/dashboard",              icon: LayoutDashboard },
+    ],
+  },
+  {
+    section: "Administration",
+    items: [
+      { label: "Users",        href: "/dashboard/admin/users",  icon: Users },
+      { label: "All Courses",  href: "/dashboard/library",      icon: BookOpen },
+      { label: "Worker Tasks", href: "/dashboard/admin",        icon: ClipboardList },
+    ],
+  },
+  {
+    section: "System",
+    items: [
+      { label: "Settings",     href: "/dashboard/settings",     icon: SettingsIcon },
+    ],
+  },
+];
+
 /* ── component ───────────────────────────────────────────────────────────── */
 export default function Sidebar() {
-  const pathname      = usePathname();
+  const pathname        = usePathname();
   const [open, setOpen] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    setUser(authService.getUser());
+  }, []);
+
+  const isAdmin = user?.role === "admin";
+  const NAV     = isAdmin ? ADMIN_NAV : TEACHER_NAV;
 
   return (
     <aside
@@ -66,12 +101,13 @@ export default function Sidebar() {
 
       {/* brand */}
       <div className="flex items-center gap-2.5 px-6 pt-7 pb-9 whitespace-nowrap">
-        
+        {isAdmin && <ShieldCheck className="w-5 h-5 text-[#f6ad55] shrink-0" />}
         <span
           style={{ fontFamily: "var(--font-heading), sans-serif", opacity: open ? 1 : 0, transition: "opacity 0.15s" }}
           className="text-[18px] font-black tracking-tight text-[#f0f4ff] whitespace-nowrap"
         >
           Edu<span className="text-[#63b3ed]">Share</span>
+          {isAdmin && <span className="ml-1.5 text-[11px] font-semibold text-[#f6ad55]">Admin</span>}
         </span>
       </div>
 
@@ -96,7 +132,9 @@ export default function Sidebar() {
                   className={[
                     "flex items-center gap-3 py-2.5 mx-2 rounded-[9px] text-sm font-medium whitespace-nowrap transition-colors duration-150",
                     active
-                      ? "bg-[rgba(99,179,237,0.12)] text-[#63b3ed]"
+                      ? isAdmin
+                        ? "bg-[rgba(246,173,85,0.12)] text-[#f6ad55]"
+                        : "bg-[rgba(99,179,237,0.12)] text-[#63b3ed]"
                       : "text-[#5a7299] hover:bg-white/5 hover:text-[#d0dff7]",
                   ].join(" ")}
                 >
@@ -116,14 +154,14 @@ export default function Sidebar() {
       {/* user card */}
       <div style={{ padding: open ? "0 16px 24px" : "0 10px 24px", transition: "padding 0.3s" }}>
         <div className="flex items-center gap-2.5 p-3 rounded-[10px] bg-white/4 border border-white/6 cursor-pointer hover:bg-white/[0.07] transition-colors whitespace-nowrap">
-          <div className="w-8 h-8 rounded-[8px] bg-linear-to-br from-[#63b3ed] to-[#a78bfa] flex items-center justify-center text-xs font-bold text-white shrink-0">
-            DA
+          <div className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-xs font-bold text-white shrink-0 ${isAdmin ? "bg-gradient-to-br from-[#f6ad55] to-[#ed8936]" : "bg-gradient-to-br from-[#63b3ed] to-[#a78bfa]"}`}>
+            {user?.fullName?.slice(0, 2).toUpperCase() || "??"}
           </div>
           <div style={{ opacity: open ? 1 : 0, transition: "opacity 0.15s" }} className="overflow-hidden">
-            <p className="text-[13px] font-semibold text-[#d0dff7] truncate">Dr. Amira Ben Ali</p>
-            <div className="flex items-center gap-1 text-[11px] text-[#3d8b3d] mt-0.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#48bb78] shrink-0" />
-              Verified Educator
+            <p className="text-[13px] font-semibold text-[#d0dff7] truncate">{user?.fullName || "Loading..."}</p>
+            <div className={`flex items-center gap-1 text-[11px] mt-0.5 ${isAdmin ? "text-[#f6ad55]" : "text-[#3d8b3d]"}`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdmin ? "bg-[#f6ad55]" : "bg-[#48bb78]"}`} />
+              {isAdmin ? "Administrator" : "Verified Educator"}
             </div>
           </div>
         </div>

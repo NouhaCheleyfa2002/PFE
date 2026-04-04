@@ -123,10 +123,10 @@ export default function AuthScreen() {
       });
       
       // Redirect based on role
-      if (result.user.role === "teacher") {
-        router.push("/dashboard");
-      } else {
+      if (result.user.role === "student") {
         router.push("/student/library");
+      } else {
+        router.push("/dashboard");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -151,10 +151,10 @@ export default function AuthScreen() {
       });
       
       // Redirect based on role
-      if (result.user.role === "teacher") {
-        router.push("/dashboard");
-      } else {
+      if (result.user.role === "student") {
         router.push("/student/library");
+      } else {
+        router.push("/dashboard");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
