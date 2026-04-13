@@ -7,6 +7,7 @@ import { UploadModule } from './upload/upload.module';
 import { AuthModule } from './auth/auth.module';
 import { NotificationModule } from './notification/notification.module';
 import { AdminModule } from './admin/admin.module';
+import { QuestionsModule } from './questions/questions.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AdminModule } from './admin/admin.module';
     AuthModule,
     NotificationModule,
     AdminModule,
+    QuestionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

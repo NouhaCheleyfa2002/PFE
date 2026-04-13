@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   BookOpen,
@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ClipboardList,
   Users,
+  LogOut,
 } from "lucide-react";
 import { authService, User } from "@/lib/auth";
 
@@ -74,6 +75,7 @@ const ADMIN_NAV = [
 /* ── component ───────────────────────────────────────────────────────────── */
 export default function Sidebar() {
   const pathname        = usePathname();
+  const router          = useRouter();
   const [open, setOpen] = useState(true);
   const [user, setUser] = useState<User | null>(null);
 
@@ -151,8 +153,8 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* user card */}
-      <div style={{ padding: open ? "0 16px 24px" : "0 10px 24px", transition: "padding 0.3s" }}>
+      {/* user card + logout */}
+      <div style={{ padding: open ? "0 16px 24px" : "0 10px 24px", transition: "padding 0.3s" }} className="space-y-2">
         <div className="flex items-center gap-2.5 p-3 rounded-[10px] bg-white/4 border border-white/6 cursor-pointer hover:bg-white/[0.07] transition-colors whitespace-nowrap">
           <div className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-xs font-bold text-white shrink-0 ${isAdmin ? "bg-gradient-to-br from-[#f6ad55] to-[#ed8936]" : "bg-gradient-to-br from-[#63b3ed] to-[#a78bfa]"}`}>
             {user?.fullName?.slice(0, 2).toUpperCase() || "??"}
@@ -165,6 +167,17 @@ export default function Sidebar() {
             </div>
           </div>
         </div>
+
+        <button
+          onClick={() => { authService.logout(); router.push("/auth"); }}
+          style={{ paddingLeft: open ? 12 : 18, paddingRight: open ? 12 : 18, transition: "padding 0.3s" }}
+          className="flex items-center gap-3 w-full py-2.5 rounded-[9px] text-sm font-medium text-[#5a7299] hover:bg-red-500/10 hover:text-red-400 transition-colors whitespace-nowrap"
+        >
+          <LogOut className="w-5 h-5 shrink-0" />
+          <span style={{ opacity: open ? 1 : 0, transition: "opacity 0.15s" }} className="whitespace-nowrap">
+            Logout
+          </span>
+        </button>
       </div>
     </aside>
   );
