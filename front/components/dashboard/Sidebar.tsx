@@ -156,7 +156,7 @@ export default function Sidebar() {
       {/* user card + logout */}
       <div style={{ padding: open ? "0 16px 24px" : "0 10px 24px", transition: "padding 0.3s" }} className="space-y-2">
         <div className="flex items-center gap-2.5 p-3 rounded-[10px] bg-white/4 border border-white/6 cursor-pointer hover:bg-white/[0.07] transition-colors whitespace-nowrap">
-          <div className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-xs font-bold text-white shrink-0 ${isAdmin ? "bg-gradient-to-br from-[#f6ad55] to-[#ed8936]" : "bg-gradient-to-br from-[#63b3ed] to-[#a78bfa]"}`}>
+          <div className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-xs font-bold text-white shrink-0 ${isAdmin ? "bg-linear-to-br from-[#f6ad55] to-[#ed8936]" : "bg-linear-to-br from-[#63b3ed] to-[#a78bfa]"}`}>
             {user?.fullName?.slice(0, 2).toUpperCase() || "??"}
           </div>
           <div style={{ opacity: open ? 1 : 0, transition: "opacity 0.15s" }} className="overflow-hidden">

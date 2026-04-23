@@ -27,6 +27,9 @@ export interface Question {
   correctAnswer?: string;
   blanks?: string[];
   imageUrl?: string;
+  imageWidth?: number;
+  imageAlign?: "left" | "center" | "right";
+  imageCaption?: string;
   matchPairs?: MatchPair[];
   lines?: number;
 }
