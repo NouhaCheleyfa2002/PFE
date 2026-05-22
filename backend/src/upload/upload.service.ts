@@ -15,7 +15,9 @@ export class UploadService {
       .replace('seaweed-filer', 'localhost');
   }
 
-  async uploadFile(file: Express.Multer.File): Promise<{
+  async uploadFile(
+    file: Express.Multer.File,
+  ): Promise<{
     fid: string;
     fileName: string;
     fileUrl: string;

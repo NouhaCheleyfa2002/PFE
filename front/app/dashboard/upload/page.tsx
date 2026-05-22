@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { DocumentPreview } from "@/components/preview/DocumentPreview";
 import { useResources } from "@/lib/resources-context";
+import { authService } from "@/lib/auth";
 import {
   Upload,
   FileText,
@@ -18,6 +18,13 @@ import {
   AlertCircle,
   CloudUpload,
   Sparkles,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  FileSearch,
+  RefreshCw,
+  Download,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
@@ -57,6 +64,25 @@ interface UploadedFileInfo {
   fileUrl: string;
   fileName: string;
   size: number;
+  documentId?: string;
+}
+
+interface ProcessedDocument {
+  id: string;
+  originalName: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  fileSize: number;
+  ocrResultUrl?: string;
+  errorMessage?: string;
+  createdAt: string;
+  processedAt?: string;
+}
+
+interface OcrResultData {
+  documentId: string;
+  pages: { page: number; text: string; confidence?: number }[];
+  totalPages: number;
+  processedAt: string;
 }
 
 export default function UploadPage() {
@@ -72,6 +98,14 @@ export default function UploadPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   const [isPublishing, setIsPublishing] = useState(false);
+  
+  // Document processing states
+  const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [selectedOcrResult, setSelectedOcrResult] = useState<OcrResultData | null>(null);
+  const [loadingOcr, setLoadingOcr] = useState(false);
+  const [showOcrModal, setShowOcrModal] = useState(false);
+  const [viewMode, setViewMode] = useState<"upload" | "documents">("upload");
   
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
@@ -154,7 +188,8 @@ export default function UploadPage() {
     setErrorMessage(null);
 
     const formData = new FormData();
-    formData.append("file", selectedFile);
+    // Backend expects 'files' (plural) because it uses FilesInterceptor
+    formData.append("files", selectedFile);
 
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
@@ -170,14 +205,29 @@ export default function UploadPage() {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const data = JSON.parse(xhr.responseText);
-          setUploadedFile({
-            fid: data.fid,
-            fileUrl: data.fileUrl,
-            fileName: data.fileName,
-            size: data.size,
-          });
-          setUploadStatus("success");
-        } catch {
+          // Backend returns { message, documents: [...] }
+          const uploadedDoc = data.documents && data.documents[0];
+          
+          if (uploadedDoc) {
+            setUploadedFile({
+              fid: uploadedDoc.id,
+              fileUrl: selectedFile ? URL.createObjectURL(selectedFile) : "",
+              fileName: uploadedDoc.originalName,
+              size: selectedFile?.size || 0,
+              documentId: uploadedDoc.id,
+            });
+            setUploadStatus("success");
+            
+            // Show message if document was added to processing queue
+            console.log(`Document uploaded: ${uploadedDoc.id}`);
+            // Refresh documents list
+            fetchDocuments();
+          } else {
+            setErrorMessage("Upload succeeded but no document info returned");
+            setUploadStatus("error");
+          }
+        } catch (err) {
+          console.error("Parse error:", err);
           setErrorMessage("Failed to parse server response");
           setUploadStatus("error");
         }
@@ -186,7 +236,7 @@ export default function UploadPage() {
           const error = JSON.parse(xhr.responseText);
           setErrorMessage(error.message || "Upload failed");
         } catch {
-          setErrorMessage("Upload failed");
+          setErrorMessage(`Upload failed with status ${xhr.status}`);
         }
         setUploadStatus("error");
       }
@@ -203,7 +253,12 @@ export default function UploadPage() {
       setUploadProgress(0);
     });
 
-    xhr.open("POST", `${API_URL}/upload`);
+    // Get auth token and add to headers
+    const token = authService.getToken();
+    xhr.open("POST", `${API_URL}/documents/upload`);
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
     xhr.send(formData);
   };
 
@@ -284,6 +339,145 @@ export default function UploadPage() {
     }
   };
 
+  // Fetch documents with processing status
+  const fetchDocuments = async () => {
+    const token = authService.getToken();
+    if (!token) {
+      console.error("No auth token found");
+      return;
+    }
+
+    console.log("Fetching documents...");
+    setLoadingDocuments(true);
+    try {
+      const response = await fetch(`${API_URL}/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      
+      console.log("Response status:", response.status);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log("Documents data:", data);
+        setDocuments(data.documents || []);
+      } else {
+        const errorText = await response.text();
+        console.error("Failed to fetch documents:", response.status, errorText);
+      }
+    } catch (error) {
+      console.error("Failed to fetch documents:", error);
+    } finally {
+      setLoadingDocuments(false);
+    }
+  };
+
+  // Fetch OCR result for a document
+  const fetchOcrResult = async (documentId: string) => {
+    const token = authService.getToken();
+    if (!token) return;
+
+    setLoadingOcr(true);
+    try {
+      // First get the OCR result metadata (contains the URL to the JSON)
+      const response = await fetch(`${API_URL}/documents/${documentId}/ocr-result`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Now fetch the actual OCR content from the ocrResultUrl
+        if (data.ocrResultUrl) {
+          try {
+            const ocrContentResponse = await fetch(data.ocrResultUrl);
+            if (ocrContentResponse.ok) {
+              const ocrContent = await ocrContentResponse.json();
+              setSelectedOcrResult(ocrContent);
+              setShowOcrModal(true);
+            } else {
+              // Fallback: show what we have
+              setSelectedOcrResult({
+                documentId: data.documentId,
+                pages: [],
+                totalPages: 0,
+                processedAt: new Date().toISOString(),
+              });
+              setShowOcrModal(true);
+            }
+          } catch {
+            console.error("Failed to fetch OCR content from URL");
+            setSelectedOcrResult({
+              documentId: data.documentId,
+              pages: [],
+              totalPages: 0,
+              processedAt: new Date().toISOString(),
+            });
+            setShowOcrModal(true);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch OCR result:", error);
+    } finally {
+      setLoadingOcr(false);
+    }
+  };
+
+  // Auto-refresh documents when in documents view
+  useEffect(() => {
+    if (viewMode === "documents") {
+      fetchDocuments();
+      const interval = setInterval(fetchDocuments, 5000); // Refresh every 5 seconds
+      return () => clearInterval(interval);
+    }
+  }, [viewMode]);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "pending":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 text-xs font-medium">
+            <Clock className="w-3 h-3" />
+            Pending
+          </span>
+        );
+      case "processing":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Processing
+          </span>
+        );
+      case "completed":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+            <CheckCircle className="w-3 h-3" />
+            Completed
+          </span>
+        );
+      case "failed":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-medium">
+            <XCircle className="w-3 h-3" />
+            Failed
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // formatFileSize already defined above
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
+
   // Step 1: Upload File
   const renderUploadStep = () => (
     <div className="max-w-2xl mx-auto">
@@ -352,9 +546,9 @@ export default function UploadPage() {
                     <Check className="w-5 h-5 text-green-600" />
                   </div>
                   <button
-                    onClick={() => setShowPreview(true)}
+                    onClick={() => window.open(uploadedFile.fileUrl, '_blank')}
                     className="p-2 rounded-lg hover:bg-[#edf0f7] transition-colors"
-                    title="Preview"
+                    title="Open in New Tab"
                   >
                     <Eye className="w-5 h-5 text-[#63b3ed]" />
                   </button>
@@ -460,7 +654,7 @@ export default function UploadPage() {
               </p>
             </div>
             <button
-              onClick={() => setShowPreview(true)}
+              onClick={() => uploadedFile && window.open(uploadedFile.fileUrl, '_blank')}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#f9faff] border border-[#edf0f7] text-[#63b3ed] hover:bg-[#edf0f7] transition-colors"
             >
               <Eye className="w-4 h-4" />
@@ -719,7 +913,7 @@ export default function UploadPage() {
         {/* Preview Button */}
         {uploadedFile && (
           <button
-            onClick={() => setShowPreview(true)}
+            onClick={() => window.open(uploadedFile.fileUrl, '_blank')}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#f9faff] border border-[#edf0f7] text-[#63b3ed] font-medium hover:bg-[#edf0f7] transition-colors mb-8"
           >
             <Eye className="w-5 h-5" />
@@ -767,20 +961,145 @@ export default function UploadPage() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="mb-8 text-center">
-        <h1
-          style={{ fontFamily: "var(--font-heading), sans-serif" }}
-          className="text-2xl font-bold text-[#0d1b3e]"
-        >
-          Upload Course Material
-        </h1>
-        <p className="text-sm text-[#8899bb] mt-1">
-          Share your educational resources with the community
-        </p>
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1
+              style={{ fontFamily: "var(--font-heading), sans-serif" }}
+              className="text-2xl font-bold text-[#0d1b3e]"
+            >
+              Upload & Process Documents
+            </h1>
+            <p className="text-sm text-[#8899bb] mt-1">
+              Upload PDFs for automatic OCR processing or share other educational resources
+            </p>
+          </div>
+          
+          {/* View Mode Toggle */}
+          <div className="flex items-center gap-2 bg-[#f9faff] p-1 rounded-lg border border-[#edf0f7]">
+            <button
+              onClick={() => setViewMode("upload")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                viewMode === "upload"
+                  ? "bg-white text-[#0d1b3e] shadow-sm"
+                  : "text-[#8899bb] hover:text-[#0d1b3e]"
+              }`}
+            >
+              <Upload className="w-4 h-4" />
+              Upload
+            </button>
+            <button
+              onClick={() => setViewMode("documents")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                viewMode === "documents"
+                  ? "bg-white text-[#0d1b3e] shadow-sm"
+                  : "text-[#8899bb] hover:text-[#0d1b3e]"
+              }`}
+            >
+              <FileSearch className="w-4 h-4" />
+              My Documents ({documents.length})
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Steps Progress */}
-      <div className="flex items-center justify-center gap-2 mb-10">
+      {/* Documents View */}
+      {viewMode === "documents" && (
+        <div className="space-y-4">
+          {/* Refresh Button */}
+          <div className="flex justify-end">
+            <button
+              onClick={fetchDocuments}
+              disabled={loadingDocuments}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white border border-[#edf0f7] text-[#4a5568] hover:border-[#63b3ed] transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingDocuments ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+
+          {/* Documents List */}
+          {loadingDocuments && documents.length === 0 ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-[#63b3ed]" />
+            </div>
+          ) : documents.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[#edf0f7] p-12 text-center">
+              <FileText className="w-16 h-16 text-[#c0d0e8] mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-[#0d1b3e] mb-2">
+                No documents yet
+              </h3>
+              <p className="text-sm text-[#8899bb] mb-6">
+                Upload a PDF to start processing with OCR
+              </p>
+              <button
+                onClick={() => setViewMode("upload")}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[#63b3ed] text-white font-medium hover:bg-[#4299e1] transition-colors"
+              >
+                <Upload className="w-5 h-5" />
+                Upload Document
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="bg-white rounded-xl border border-[#edf0f7] p-6 hover:border-[#63b3ed] transition-all"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-4 flex-1">
+                      <div className="w-12 h-12 rounded-lg bg-[#f9faff] border border-[#edf0f7] flex items-center justify-center shrink-0">
+                        <FileText className="w-6 h-6 text-[#63b3ed]" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-[#0d1b3e] mb-1 truncate">
+                          {doc.originalName}
+                        </h3>
+                        <div className="flex items-center gap-3 text-sm text-[#8899bb] mb-2">
+                          <span>{formatFileSize(doc.fileSize)}</span>
+                          <span>•</span>
+                          <span>{formatDate(doc.createdAt)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {getStatusBadge(doc.status)}
+                          {doc.errorMessage && (
+                            <span className="text-xs text-red-600">
+                              {doc.errorMessage}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {doc.status === "completed" && doc.ocrResultUrl && (
+                        <button
+                          onClick={() => fetchOcrResult(doc.id)}
+                          disabled={loadingOcr}
+                          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8f4fc] text-[#63b3ed] hover:bg-[#d0e9f7] transition-colors disabled:opacity-50"
+                        >
+                          {loadingOcr ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <FileSearch className="w-4 h-4" />
+                          )}
+                          View OCR
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Upload View */}
+      {viewMode === "upload" && (
+        <>
+          {/* Steps Progress */}
+          <div className="flex items-center justify-center gap-2 mb-10">
         <button
           onClick={() => currentStep > 1 && uploadStatus === "success" && setCurrentStep(1)}
           className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
@@ -832,13 +1151,93 @@ export default function UploadPage() {
       {currentStep === 2 && renderDetailsStep()}
       {currentStep === 3 && renderSuccessStep()}
 
-      {/* Document Preview Modal */}
-      {showPreview && uploadedFile && (
-        <DocumentPreview
-          fileUrl={uploadedFile.fileUrl}
-          fileName={uploadedFile.fileName}
-          onClose={() => setShowPreview(false)}
-        />
+      {/* Document Preview Modal - Removed, using browser native viewer */}
+        </>
+      )}
+
+      {/* OCR Result Modal */}
+      {showOcrModal && selectedOcrResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col mx-4">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#edf0f7]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#e8f4fc] flex items-center justify-center">
+                  <FileSearch className="w-5 h-5 text-[#63b3ed]" />
+                </div>
+                <div>
+                  <h3
+                    style={{ fontFamily: "var(--font-heading), sans-serif" }}
+                    className="text-lg font-semibold text-[#0d1b3e]"
+                  >
+                    OCR Result
+                  </h3>
+                  <p className="text-xs text-[#8899bb]">
+                    {selectedOcrResult.totalPages} page{selectedOcrResult.totalPages !== 1 ? "s" : ""} extracted
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowOcrModal(false);
+                  setSelectedOcrResult(null);
+                }}
+                className="p-2 rounded-lg hover:bg-[#f9faff] transition-colors"
+              >
+                <X className="w-5 h-5 text-[#8899bb]" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
+              {selectedOcrResult.pages && selectedOcrResult.pages.length > 0 ? (
+                selectedOcrResult.pages.map((page: { page: number; text: string; confidence?: number }) => (
+                  <div key={page.page} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-[#0d1b3e] flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-full bg-[#e8f4fc] flex items-center justify-center text-xs font-bold text-[#63b3ed]">
+                          {page.page}
+                        </span>
+                        Page {page.page}
+                      </h4>
+                      {page.confidence !== undefined && (
+                        <span className="text-xs text-[#8899bb] bg-[#f9faff] px-2 py-1 rounded-full">
+                          Confidence: {(page.confidence * 100).toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="bg-[#f9faff] border border-[#edf0f7] rounded-xl p-4">
+                      <pre className="text-sm text-[#2d3748] whitespace-pre-wrap font-mono leading-relaxed">
+                        {page.text}
+                      </pre>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12">
+                  <FileText className="w-12 h-12 text-[#c0d0e8] mx-auto mb-3" />
+                  <p className="text-[#8899bb]">No text content was extracted from this document.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-[#edf0f7] flex items-center justify-between">
+              <p className="text-xs text-[#8899bb]">
+                Processed: {selectedOcrResult.processedAt ? new Date(selectedOcrResult.processedAt).toLocaleString() : "N/A"}
+              </p>
+              <button
+                onClick={() => {
+                  setShowOcrModal(false);
+                  setSelectedOcrResult(null);
+                }}
+                className="px-5 py-2 rounded-xl bg-[#0d1b3e] text-white text-sm font-medium hover:bg-[#1a2d5a] transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

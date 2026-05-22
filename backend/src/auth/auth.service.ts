@@ -24,30 +24,57 @@ export class AuthService implements OnModuleInit {
   async seedAdmin(): Promise<void> {
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
     const adminPassword = this.configService.get<string>('ADMIN_PASSWORD');
+    const teacherEmail = this.configService.get<string>('TEACHER_EMAIL');
+    const teacherPassword = this.configService.get<string>('TEACHER_PASSWORD');
 
+    // Seed admin account
     if (!adminEmail || !adminPassword) {
       this.logger.warn('ADMIN_EMAIL or ADMIN_PASSWORD not set – skipping admin seed');
-      return;
+    } else {
+      const existingAdmin = this.users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase());
+      if (!existingAdmin) {
+        const hashedPassword = await bcrypt.hash(adminPassword, 10);
+        const admin: User = {
+          id: randomUUID(),
+          email: adminEmail.toLowerCase(),
+          password: hashedPassword,
+          fullName: 'Administrator',
+          role: 'admin',
+          verified: true,
+          createdAt: new Date(),
+        };
+        this.users.push(admin);
+        this.logger.log(`Admin account created: ${adminEmail}`);
+      } else {
+        this.logger.log('Admin account already exists');
+      }
     }
 
-    const existing = this.users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase());
-    if (existing) {
-      this.logger.log('Admin account already exists');
-      return;
+    // Seed teacher account
+    if (!teacherEmail || !teacherPassword) {
+      this.logger.warn('TEACHER_EMAIL or TEACHER_PASSWORD not set – skipping teacher seed');
+    } else {
+      const existingTeacher = this.users.find(u => u.email.toLowerCase() === teacherEmail.toLowerCase());
+      if (!existingTeacher) {
+        const hashedPassword = await bcrypt.hash(teacherPassword, 10);
+        const teacher: User = {
+          id: randomUUID(),
+          email: teacherEmail.toLowerCase(),
+          password: hashedPassword,
+          fullName: 'Dr. Sarah Khalil',
+          role: 'teacher',
+          university: 'Faculty of Medicine, Tunis',
+          region: 'Tunis',
+          specialty: 'Cardiology',
+          verified: true,
+          createdAt: new Date(),
+        };
+        this.users.push(teacher);
+        this.logger.log(`Teacher account created: ${teacherEmail}`);
+      } else {
+        this.logger.log('Teacher account already exists');
+      }
     }
-
-    const hashedPassword = await bcrypt.hash(adminPassword, 10);
-    const admin: User = {
-      id: randomUUID(),
-      email: adminEmail.toLowerCase(),
-      password: hashedPassword,
-      fullName: 'Administrator',
-      role: 'admin',
-      verified: true,
-      createdAt: new Date(),
-    };
-    this.users.push(admin);
-    this.logger.log(`Admin account created: ${adminEmail}`);
   }
 
   getUsers(): Omit<User, 'password'>[] {

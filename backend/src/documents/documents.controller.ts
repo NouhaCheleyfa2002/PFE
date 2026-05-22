@@ -16,7 +16,11 @@ import { DocumentsService } from './documents.service';
 import { UploadService } from '../upload/upload.service';
 import { DocumentProcessorService } from './document-processor.service';
 
-const ALLOWED_MIME_TYPES = ['application/pdf'];
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+];
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 const MAX_FILES = 10; // Maximum files per upload
 
@@ -40,13 +44,18 @@ export class DocumentsController {
     }
 
     const userId = req.user.sub;
-    const uploadedDocuments = [];
+    const uploadedDocuments: Array<{
+      id: string;
+      originalName: string;
+      status: string;
+      createdAt: Date;
+    }> = [];
 
     for (const file of files) {
-      // Validate file type
+      // Validate file type - only PDFs go to processing queue
       if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
         throw new HttpException(
-          `Invalid file type for ${file.originalname}. Only PDF files are allowed.`,
+          `Invalid file type for ${file.originalname}. Only PDF, DOCX, and PPTX files are allowed.`,
           HttpStatus.BAD_REQUEST,
         );
       }
@@ -63,21 +72,31 @@ export class DocumentsController {
         // Step 1: Upload to SeaweedFS
         const uploadResult = await this.uploadService.uploadFile(file);
 
-        // Step 2: Save metadata to DB
-        const document = await this.documentsService.createDocument({
-          userId,
-          originalName: file.originalname,
-          storageUrl: uploadResult.fileUrl,
-          fileSize: file.size,
-          mimeType: file.mimetype,
-        });
+        // Step 2: Save metadata to DB (only for PDFs - they need OCR processing)
+        if (file.mimetype === 'application/pdf') {
+          const document = await this.documentsService.createDocument({
+            userId,
+            originalName: file.originalname,
+            storageUrl: uploadResult.fileUrl,
+            fileSize: file.size,
+            mimeType: file.mimetype,
+          });
 
-        uploadedDocuments.push({
-          id: document.id,
-          originalName: document.originalName,
-          status: document.status,
-          createdAt: document.createdAt,
-        });
+          uploadedDocuments.push({
+            id: document.id,
+            originalName: document.originalName,
+            status: document.status,
+            createdAt: document.createdAt,
+          });
+        } else {
+          // For non-PDF files, just return upload info without creating document entry
+          uploadedDocuments.push({
+            id: uploadResult.fid,
+            originalName: uploadResult.fileName,
+            status: 'uploaded', // Not in processing queue
+            createdAt: new Date(),
+          });
+        }
       } catch (error) {
         throw new HttpException(
           `Failed to upload ${file.originalname}: ${error.message}`,
@@ -104,6 +123,7 @@ export class DocumentsController {
         originalName: doc.originalName,
         status: doc.status,
         fileSize: doc.fileSize,
+        storageUrl: doc.storageUrl,
         createdAt: doc.createdAt,
         processedAt: doc.processedAt,
         ocrResultUrl: doc.ocrResultUrl,

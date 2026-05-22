@@ -1,12 +1,17 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { DocumentEntity } from './entities/document.entity';
 import { Document, DocumentStatus } from './document.interface';
 
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
-  // In-memory document store (replace with database in production)
-  private documents: Document[] = [];
+
+  constructor(
+    @InjectRepository(DocumentEntity)
+    private readonly documentRepository: Repository<DocumentEntity>,
+  ) {}
 
   async createDocument(data: {
     userId: string;
@@ -15,42 +20,41 @@ export class DocumentsService {
     fileSize: number;
     mimeType: string;
   }): Promise<Document> {
-    const document: Document = {
-      id: randomUUID(),
-      userId: data.userId,
-      originalName: data.originalName,
-      storageUrl: data.storageUrl,
+    const document = this.documentRepository.create({
+      ...data,
       status: DocumentStatus.PENDING,
-      fileSize: data.fileSize,
-      mimeType: data.mimeType,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.documents.push(document);
-    this.logger.log(`Document created: ${document.id} - ${document.originalName}`);
+    const saved = await this.documentRepository.save(document);
+    this.logger.log(`Document created: ${saved.id} - ${saved.originalName}`);
     
-    return document;
+    return saved;
   }
 
   async findById(id: string): Promise<Document | null> {
-    const document = this.documents.find((doc) => doc.id === id);
-    return document || null;
+    return this.documentRepository.findOne({ where: { id } });
   }
 
   async findByUserId(userId: string): Promise<Document[]> {
-    return this.documents.filter((doc) => doc.userId === userId);
+    return this.documentRepository.find({
+      where: { userId },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   async findPendingDocuments(): Promise<Document[]> {
-    return this.documents
-      .filter((doc) => doc.status === DocumentStatus.PENDING)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    return this.documentRepository.find({
+      where: { status: DocumentStatus.PENDING },
+      order: { createdAt: 'ASC' },
+    });
   }
 
   async getNextPendingDocument(): Promise<Document | null> {
-    const pending = await this.findPendingDocuments();
-    return pending.length > 0 ? pending[0] : null;
+    const pending = await this.documentRepository.findOne({
+      where: { status: DocumentStatus.PENDING },
+      order: { createdAt: 'ASC' },
+    });
+    return pending || null;
   }
 
   async updateDocumentStatus(
@@ -74,8 +78,9 @@ export class DocumentsService {
       document.errorMessage = errorMessage;
     }
 
+    const updated = await this.documentRepository.save(document);
     this.logger.log(`Document ${id} status updated to: ${status}`);
-    return document;
+    return updated;
   }
 
   async updateOcrResultUrl(id: string, ocrResultUrl: string): Promise<Document> {
@@ -87,12 +92,15 @@ export class DocumentsService {
     document.ocrResultUrl = ocrResultUrl;
     document.updatedAt = new Date();
 
+    const updated = await this.documentRepository.save(document);
     this.logger.log(`Document ${id} OCR result saved: ${ocrResultUrl}`);
-    return document;
+    return updated;
   }
 
   async getAllDocuments(): Promise<Document[]> {
-    return this.documents;
+    return this.documentRepository.find({
+      order: { createdAt: 'DESC' },
+    });
   }
 
   async getDocumentStats(): Promise<{
@@ -102,12 +110,14 @@ export class DocumentsService {
     completed: number;
     failed: number;
   }> {
-    return {
-      total: this.documents.length,
-      pending: this.documents.filter((d) => d.status === DocumentStatus.PENDING).length,
-      processing: this.documents.filter((d) => d.status === DocumentStatus.PROCESSING).length,
-      completed: this.documents.filter((d) => d.status === DocumentStatus.COMPLETED).length,
-      failed: this.documents.filter((d) => d.status === DocumentStatus.FAILED).length,
-    };
+    const [total, pending, processing, completed, failed] = await Promise.all([
+      this.documentRepository.count(),
+      this.documentRepository.count({ where: { status: DocumentStatus.PENDING } }),
+      this.documentRepository.count({ where: { status: DocumentStatus.PROCESSING } }),
+      this.documentRepository.count({ where: { status: DocumentStatus.COMPLETED } }),
+      this.documentRepository.count({ where: { status: DocumentStatus.FAILED } }),
+    ]);
+
+    return { total, pending, processing, completed, failed };
   }
 }

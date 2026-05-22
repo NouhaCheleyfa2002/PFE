@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useState, useEffect } from "react";
 import {
   FileText,
@@ -58,12 +56,17 @@ function PDFPreview({ fileUrl }: { fileUrl: string }) {
 
   // Set up PDF.js worker on client side only
   useEffect(() => {
-    const setupWorker = async () => {
-      const { pdfjs } = await import("react-pdf");
-      pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-      setWorkerReady(true);
-    };
-    setupWorker();
+    if (typeof window !== 'undefined') {
+      // Use react-pdf's pdfjs instead of importing directly
+      import('react-pdf').then((reactPdf) => {
+        reactPdf.pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+        setWorkerReady(true);
+      }).catch((error) => {
+        console.error("PDF worker initialization failed:", error);
+        setError("Failed to initialize PDF viewer");
+        setWorkerReady(true);
+      });
+    }
   }, []);
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {

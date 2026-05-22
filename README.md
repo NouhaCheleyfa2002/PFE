@@ -36,11 +36,16 @@ http://localhost:3001/dashboard/documents
 ```
 
 ### Documentation
+- **[🚀 Getting Started](GETTING_STARTED.md)** - New user guide (START HERE!)
 - **[📖 Quick Start Guide](QUICK_START.md)** - Get started in 30 seconds
+- **[🐛 Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[🐳 Docker Setup Guide](DOCKER_SETUP.md)** - Complete Docker documentation
+- **[🐳 Docker Quick Reference](DOCKER_QUICK_REFERENCE.md)** - Docker commands cheat sheet
 - **[📋 Complete Documentation](DOCUMENT_PROCESSING_PIPELINE.md)** - Full technical docs
 - **[🏗️ Architecture Diagrams](ARCHITECTURE_DIAGRAM.md)** - Visual flow diagrams
 - **[✅ Verification Checklist](VERIFICATION_CHECKLIST.md)** - Testing guide
 - **[📝 Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - What was built
+- **[📝 Complete Summary](COMPLETE_IMPLEMENTATION_SUMMARY.md)** - Everything in one place
 
 ## 📁 Project Structure
 
@@ -129,8 +134,18 @@ npm run dev
 - SeaweedFS UI: http://localhost:8888
 
 ### Default Credentials
+
+**Admin Account:**
 - Email: `admin@example.com`
 - Password: `SuperSecret123`
+- Role: Administrator
+
+**Teacher Account:**
+- Email: `teacher@university.tn`
+- Password: `Teacher123`
+- Role: Teacher (Educator)
+- Name: Dr. Sarah Khalil
+- University: Faculty of Medicine, Tunis
 
 ## 📚 Features
 
@@ -241,7 +256,6 @@ curl http://localhost:3000/documents/stats \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-## 🐛 Troubleshooting
 
 ### Docker containers not starting
 ```bash
@@ -257,14 +271,6 @@ SEAWEED_MASTER_URL=http://localhost:9333
 SEAWEED_FILER_URL=http://localhost:8888
 ```
 
-### Worker not processing documents
-Check backend logs for:
-```
-[DocumentProcessorService] Worker started, polling every 5000ms
-```
-
-### More Help
-See [VERIFICATION_CHECKLIST.md](VERIFICATION_CHECKLIST.md) for detailed troubleshooting.
 
 ## 📝 Development
 
@@ -284,32 +290,7 @@ npm run build        # Build for production
 npm run start        # Run production build
 ```
 
-## 🚀 Deployment
 
-### Production Checklist
-- [ ] Migrate to PostgreSQL database
-- [ ] Configure Azure OCR credentials
-- [ ] Set up environment variables
-- [ ] Configure CORS for production domain
-- [ ] Set up SSL/TLS certificates
-- [ ] Configure backup strategy
-- [ ] Set up monitoring and logging
-- [ ] Scale worker instances
-
-## 📄 License
-
-[Add your license here]
-
-## 👥 Contributors
-
-[Add contributors here]
-
-## 🙏 Acknowledgments
-
-- NestJS team for the amazing framework
-- Next.js team for the React framework
-- Azure AI for Document Intelligence
-- SeaweedFS for distributed storage
 
 ---
 
