@@ -30,17 +30,27 @@ export class OCRService {
     }
 
     try {
-      // Step 1: Submit document for analysis
+      // Step 1: Download the file from SeaweedFS
+      this.logger.log(`Downloading file from: ${fileUrl}`);
+      const fileResponse = await axios.get(fileUrl, {
+        responseType: 'arraybuffer',
+      });
+      const fileBuffer = Buffer.from(fileResponse.data);
+      this.logger.log(`File downloaded, size: ${fileBuffer.length} bytes`);
+
+      // Step 2: Submit document content for analysis
       const analyzeUrl = `${this.azureEndpoint}/formrecognizer/documentModels/prebuilt-read:analyze?api-version=2023-07-31`;
       
       const submitResponse = await axios.post(
         analyzeUrl,
-        { urlSource: fileUrl },
+        fileBuffer,
         {
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/pdf',
             'Ocp-Apim-Subscription-Key': this.azureApiKey,
           },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
         },
       );
 
@@ -52,10 +62,10 @@ export class OCRService {
 
       this.logger.log(`Document submitted to Azure OCR, operation: ${operationLocation}`);
 
-      // Step 2: Poll for results
+      // Step 3: Poll for results
       const result = await this.pollForResults(operationLocation);
 
-      // Step 3: Extract text from result
+      // Step 4: Extract text from result
       const ocrResult = this.extractTextFromAzureResult(documentId, result);
 
       this.logger.log(`OCR processing completed for document: ${documentId}`);
@@ -63,7 +73,8 @@ export class OCRService {
     } catch (error) {
       this.logger.error(`Azure OCR failed for document ${documentId}:`, {
         error: error.message,
-        stack: error.stack,
+        response: error.response?.data,
+        status: error.response?.status,
         endpoint: this.azureEndpoint,
       });
       

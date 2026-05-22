@@ -116,8 +116,13 @@ export class DocumentsController {
     const userId = req.user.sub;
     const documents = await this.documentsService.findByUserId(userId);
     
+    // Debug logging
+    console.log(`[DocumentsController] Fetching documents for user: ${userId}`);
+    console.log(`[DocumentsController] Found ${documents.length} documents`);
+    
     return {
       total: documents.length,
+      userId: userId, // Include userId in response for debugging
       documents: documents.map((doc) => ({
         id: doc.id,
         originalName: doc.originalName,
@@ -135,6 +140,26 @@ export class DocumentsController {
   @Get('stats')
   async getStats() {
     return this.documentsService.getDocumentStats();
+  }
+
+  @Get('all/debug')
+  async getAllDocumentsDebug(@Request() req: any) {
+    // Only allow admin to see all documents
+    if (req.user.role !== 'admin') {
+      throw new HttpException('Forbidden - Admin only', HttpStatus.FORBIDDEN);
+    }
+    
+    const allDocuments = await this.documentsService.getAllDocuments();
+    return {
+      total: allDocuments.length,
+      documents: allDocuments.map((doc) => ({
+        id: doc.id,
+        userId: doc.userId,
+        originalName: doc.originalName,
+        status: doc.status,
+        createdAt: doc.createdAt,
+      })),
+    };
   }
 
   @Get('processing-status')
