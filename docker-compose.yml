@@ -1,7 +1,17 @@
 services:
+  embeddings:
+    image: hwdsl2/embeddings-server
+    container_name: embeddings
+    restart: always
+    environment:
+      - EMBEDDING_MODEL=BAAI/bge-m3
+    volumes:
+      - ./embeddings-data:/var/lib/embeddings
+    ports:
+      - "8000:8000"
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: edushare-postgres
     environment:
       POSTGRES_DB: edushare
@@ -66,78 +76,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
-
-  # Backend Service (NestJS)
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=development
-      - PORT=3000
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - DATABASE_HOST=postgres
-      - DATABASE_PORT=5432
-      - DATABASE_NAME=edushare
-      - DATABASE_USER=edushare_user
-      - DATABASE_PASSWORD=edushare_password
-      - SEAWEED_MASTER_URL=http://seaweed-master:9333
-      - SEAWEED_FILER_URL=http://seaweed-filer:8888
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-SuperSecret123}
-      - FRONTEND_URL=http://localhost:3001
-      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
-      - AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT:-}
-      - AZURE_OCR_API_KEY=${AZURE_OCR_API_KEY:-}
-      - DOCUMENT_POLL_INTERVAL_MS=${DOCUMENT_POLL_INTERVAL_MS:-5000}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      seaweed-filer:
-        condition: service_started
-    networks:
-      - edushare-network
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  # Frontend Service (Next.js)
-  frontend:
-    build:
-      context: ./front
-      dockerfile: Dockerfile
-    ports:
-      - "3001:3001"
-    environment:
-      - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://localhost:3000
-    depends_on:
-      - backend
-    networks:
-      - edushare-network
-    volumes:
-      - ./front:/app
-      - /app/node_modules
-      - /app/.next
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
 networks:
   edushare-network:

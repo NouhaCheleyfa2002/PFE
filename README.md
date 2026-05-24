@@ -8,17 +8,45 @@ EduShare is a collaborative educational platform for Tunisian universities that 
 - Exam building and question management
 - Resource sharing across institutions
 
-## 🚀 New Feature: Document Processing Pipeline
+## 🚀 New Features
+
+### 1. Document Processing Pipeline with OCR
 
 A complete **PDF document processing pipeline** with automatic OCR has been implemented!
 
-### Features
+**Features:**
 ✅ Multi-file PDF upload
 ✅ Automatic OCR processing (Azure AI Document Intelligence)
 ✅ FIFO queue processing
 ✅ Real-time status updates
 ✅ JSON results storage
 ✅ Complete REST API
+
+### 2. DeepSeek AI Integration
+
+**AI-powered features** integrated into the platform!
+
+**Features:**
+✅ Chat with AI assistant
+✅ Text summarization
+✅ Multi-language translation
+✅ Professional email generation
+✅ JWT-protected endpoints
+✅ Complete error handling
+
+**Quick Start:**
+```bash
+# Add to backend/.env
+DEEPSEEK_API_KEY=your-api-key-here
+
+# Test endpoints
+POST /ai/chat
+POST /ai/summarize
+POST /ai/translate
+POST /ai/generate-email
+```
+
+📚 **Documentation:** See `backend/AI_QUICK_START.md`
 
 ### Quick Start
 ```bash
@@ -35,70 +63,13 @@ cd front && npm install && npm run dev
 http://localhost:3001/dashboard/documents
 ```
 
-### Documentation
-- **[🚀 Getting Started](GETTING_STARTED.md)** - New user guide (START HERE!)
-- **[📖 Quick Start Guide](QUICK_START.md)** - Get started in 30 seconds
-- **[🐛 Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
-- **[🐳 Docker Setup Guide](DOCKER_SETUP.md)** - Complete Docker documentation
-- **[🐳 Docker Quick Reference](DOCKER_QUICK_REFERENCE.md)** - Docker commands cheat sheet
-- **[📋 Complete Documentation](DOCUMENT_PROCESSING_PIPELINE.md)** - Full technical docs
-- **[🏗️ Architecture Diagrams](ARCHITECTURE_DIAGRAM.md)** - Visual flow diagrams
-- **[✅ Verification Checklist](VERIFICATION_CHECKLIST.md)** - Testing guide
-- **[📝 Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - What was built
-- **[📝 Complete Summary](COMPLETE_IMPLEMENTATION_SUMMARY.md)** - Everything in one place
-
-## 📁 Project Structure
-
-```
-├── backend/              # NestJS API
-│   ├── src/
-│   │   ├── auth/        # Authentication & JWT
-│   │   ├── documents/   # 📄 Document processing pipeline (NEW!)
-│   │   ├── upload/      # File upload to SeaweedFS
-│   │   ├── questions/   # Question bank
-│   │   ├── admin/       # Admin endpoints
-│   │   └── notification/ # Background jobs
-│   └── .env             # Configuration
-│
-├── front/               # Next.js Frontend
-│   ├── app/
-│   │   ├── auth/        # Login/Register
-│   │   ├── dashboard/   # Main dashboard
-│   │   │   └── documents/ # 📄 Document upload UI (NEW!)
-│   │   └── student/     # Student views
-│   └── components/      # Reusable components
-│
-├── docker-compose.yml   # Infrastructure (SeaweedFS, Redis)
-└── README.md           # This file
-```
-
-## 🛠️ Technology Stack
-
-### Backend
-- **NestJS** - Node.js framework
-- **TypeScript** - Type-safe development
-- **JWT** - Authentication
-- **BullMQ** - Job queue
-- **SeaweedFS** - Distributed file storage
-- **Azure AI** - Document Intelligence (OCR)
-
-### Frontend
-- **Next.js 16** - React framework
-- **React 19** - UI library
-- **TypeScript** - Type safety
-- **Tailwind CSS** - Styling
-
 ### Infrastructure
 - **Docker** - Containerization
 - **Redis** - Message queue
 - **SeaweedFS** - Object storage
+- **PostgreSQL** - Database
+- **DeepSeek AI** - AI features
 
-## 🔧 Setup
-
-### Prerequisites
-- Node.js 18+
-- Docker & Docker Compose
-- npm or yarn
 
 ### Installation
 

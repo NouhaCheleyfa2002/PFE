@@ -10,6 +10,7 @@ import { NotificationModule } from './notification/notification.module';
 import { AdminModule } from './admin/admin.module';
 import { QuestionsModule } from './questions/questions.module';
 import { DocumentsModule } from './documents/documents.module';
+import { AiModule } from './ai/ai.module';
 import { getTypeOrmConfig } from './config/typeorm.config';
 
 @Module({
@@ -36,6 +37,7 @@ import { getTypeOrmConfig } from './config/typeorm.config';
     AdminModule,
     QuestionsModule,
     DocumentsModule,
+    AiModule,
   ],
   controllers: [AppController],
   providers: [AppService],
