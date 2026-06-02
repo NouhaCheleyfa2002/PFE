@@ -4,6 +4,7 @@ import { DocumentsService } from './documents.service';
 import { OCRService } from './ocr.service';
 import { UploadService } from '../upload/upload.service';
 import { DocumentStatus } from './document.interface';
+import { ExamPipelineService } from '../exam-pipeline/exam-pipeline.service';
 
 @Injectable()
 export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
@@ -17,6 +18,7 @@ export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
     private readonly ocrService: OCRService,
     private readonly uploadService: UploadService,
     private readonly configService: ConfigService,
+    private readonly examPipelineService: ExamPipelineService,
   ) {
     // Poll every 5 seconds by default
     this.pollIntervalMs = this.configService.get<number>('DOCUMENT_POLL_INTERVAL_MS', 5000);
@@ -95,7 +97,62 @@ export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
         // Step 5: Update document with OCR result URL
         await this.documentsService.updateOcrResultUrl(document.id, uploadResult.fileUrl);
 
-        // Step 6: Mark as completed
+        // Step 6: Run Exam Pipeline (Parse → Embed → Store) + Extract Metadata
+        try {
+          this.logger.log(`Starting exam pipeline for document: ${document.id}`);
+          
+          // Extract text from OCR result
+          const ocrText = ocrResult.pages.map((page) => page.text).join('\n\n');
+          
+          // Process through pipeline (includes metadata extraction)
+          const pipelineResult = await this.examPipelineService.processDocument(
+            document.id,
+            ocrText,
+          );
+
+          this.logger.log(
+            `Pipeline completed: ${pipelineResult.questionsStored}/${pipelineResult.questionsExtracted} questions stored`,
+          );
+
+          // Save extracted metadata to document ONLY if not already set manually
+          if (pipelineResult.metadata) {
+            const currentDoc = await this.documentsService.findById(document.id);
+            
+            // Only update fields that are currently null (not manually set)
+            const titleToSave = currentDoc.title || pipelineResult.metadata.title;
+            const levelToSave = currentDoc.level || pipelineResult.metadata.level;
+            const subjectToSave = currentDoc.subject || pipelineResult.metadata.subject;
+            const yearToSave = currentDoc.year || pipelineResult.metadata.year;
+            
+            this.logger.log('Updating document with exam metadata (preserving manual values):', {
+              title: titleToSave,
+              level: levelToSave,
+              subject: subjectToSave,
+              year: yearToSave,
+            });
+            
+            await this.documentsService.updateExamMetadata(
+              document.id,
+              titleToSave,
+              levelToSave,
+              subjectToSave,
+              yearToSave,
+            );
+          }
+
+          if (pipelineResult.errors.length > 0) {
+            this.logger.warn(`Pipeline warnings: ${pipelineResult.errors.join(', ')}`);
+          }
+        } catch (pipelineError) {
+          // Log pipeline error but don't fail the document
+          this.logger.error(
+            `Exam pipeline failed for document ${document.id}:`,
+            pipelineError,
+          );
+          // Continue to mark document as completed even if pipeline fails
+        }
+
+        // Step 7: Mark as completed
         await this.documentsService.updateDocumentStatus(
           document.id,
           DocumentStatus.COMPLETED,

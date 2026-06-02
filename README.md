@@ -48,6 +48,60 @@ POST /ai/generate-email
 
 📚 **Documentation:** See `backend/AI_QUICK_START.md`
 
+### 3. Exam Processing Pipeline (NEW!)
+
+**Complete end-to-end pipeline** for automatic exam question extraction!
+
+**Pipeline Flow:**
+```
+PDF Upload → OCR → DeepSeek AI Parsing → Vector Embeddings → pgvector Storage → Semantic Search
+```
+
+**Features:**
+✅ Automatic question extraction from exam PDFs
+✅ AI-powered parsing with DeepSeek
+✅ Vector embeddings with BAAI/bge-m3 (local, no API costs)
+✅ Semantic search with pgvector
+✅ Topic and difficulty classification
+✅ Multiple choice question support
+✅ Document-to-questions linking
+✅ Reprocessing capability
+
+**API Endpoints:**
+```bash
+GET  /exam-questions              # List all questions
+GET  /exam-questions/:id          # Get single question
+GET  /exam-questions/document/:id # Questions from specific exam
+POST /exam-questions/search       # Semantic search
+GET  /exam-questions/meta/topics  # List all topics
+GET  /exam-questions/meta/stats   # Statistics
+POST /exam-questions/reprocess/:id # Reprocess document
+```
+
+**Quick Start:**
+```bash
+# 1. Start services
+docker-compose up -d
+
+# 2. Configure (add to backend/.env)
+DEEPSEEK_API_KEY=your-key-here
+EMBEDDINGS_SERVER_URL=http://localhost:8000
+
+# 3. Upload exam PDF
+POST /documents/upload
+
+# 4. Wait for processing (automatic)
+
+# 5. Search questions
+POST /exam-questions/search
+{
+  "query": "cardiac cycle",
+  "limit": 10
+}
+```
+
+📚 **Documentation:** See `backend/EXAM_PIPELINE_QUICK_START.md`
+
 ### Quick Start
 ```bash
 # 1. Start infrastructure

@@ -11,6 +11,11 @@ export interface Document {
   updatedAt: Date;
   processedAt?: Date;
   errorMessage?: string;
+  // Exam metadata
+  title?: string;
+  level?: string;
+  subject?: string;
+  year?: number;
 }
 
 export enum DocumentStatus {

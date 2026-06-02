@@ -2,7 +2,9 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Param,
+  Body,
   UseInterceptors,
   UploadedFiles,
   UseGuards,
@@ -37,6 +39,7 @@ export class DocumentsController {
   @UseInterceptors(FilesInterceptor('files', MAX_FILES))
   async uploadDocuments(
     @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: any,
     @Request() req: any,
   ) {
     if (!files || files.length === 0) {
@@ -44,6 +47,15 @@ export class DocumentsController {
     }
 
     const userId = req.user.sub;
+    
+    // Extract manual metadata from form
+    const manualMetadata = {
+      title: body.title || null,
+      level: body.level || null,
+      subject: body.subject || null,
+      year: body.year ? parseInt(body.year, 10) : null,
+    };
+
     const uploadedDocuments: Array<{
       id: string;
       originalName: string;
@@ -81,6 +93,17 @@ export class DocumentsController {
             fileSize: file.size,
             mimeType: file.mimetype,
           });
+
+          // Step 3: If manual metadata provided, save it immediately
+          if (manualMetadata.title || manualMetadata.level || manualMetadata.subject || manualMetadata.year) {
+            await this.documentsService.updateExamMetadata(
+              document.id,
+              manualMetadata.title,
+              manualMetadata.level,
+              manualMetadata.subject,
+              manualMetadata.year,
+            );
+          }
 
           uploadedDocuments.push({
             id: document.id,
@@ -207,6 +230,44 @@ export class DocumentsController {
       documentId: document.id,
       ocrResultUrl: document.ocrResultUrl,
       status: document.status,
+    };
+  }
+
+  @Patch(':id/metadata')
+  async updateDocumentMetadata(
+    @Param('id') id: string,
+    @Body() body: { title?: string; level?: string; subject?: string; year?: number },
+    @Request() req: any,
+  ) {
+    const document = await this.documentsService.findById(id);
+    
+    if (!document) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Check if user owns the document (or is admin)
+    if (document.userId !== req.user.sub && req.user.role !== 'admin') {
+      throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+    }
+
+    // Update metadata
+    const updated = await this.documentsService.updateExamMetadata(
+      id,
+      body.title || null,
+      body.level || null,
+      body.subject || null,
+      body.year || null,
+    );
+
+    return {
+      message: 'Metadata updated successfully',
+      document: {
+        id: updated.id,
+        title: updated.title,
+        level: updated.level,
+        subject: updated.subject,
+        year: updated.year,
+      },
     };
   }
 }

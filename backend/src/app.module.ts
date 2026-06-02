@@ -11,6 +11,7 @@ import { AdminModule } from './admin/admin.module';
 import { QuestionsModule } from './questions/questions.module';
 import { DocumentsModule } from './documents/documents.module';
 import { AiModule } from './ai/ai.module';
+import { ExamPipelineModule } from './exam-pipeline/exam-pipeline.module';
 import { getTypeOrmConfig } from './config/typeorm.config';
 
 @Module({
@@ -38,8 +39,9 @@ import { getTypeOrmConfig } from './config/typeorm.config';
     QuestionsModule,
     DocumentsModule,
     AiModule,
+    ExamPipelineModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

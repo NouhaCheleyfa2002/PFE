@@ -190,6 +190,14 @@ export default function UploadPage() {
     const formData = new FormData();
     // Backend expects 'files' (plural) because it uses FilesInterceptor
     formData.append("files", selectedFile);
+    
+    // Add metadata if in step 2 (form filled)
+    if (currentStep === 2 && title) {
+      formData.append("title", title);
+      formData.append("subject", subject);
+      formData.append("level", level);
+      if (price) formData.append("year", new Date().getFullYear().toString());
+    }
 
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
@@ -298,13 +306,42 @@ export default function UploadPage() {
 
   const isFormValid = title && subject && level && type;
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!uploadedFile || !isFormValid) return;
     
     setIsPublishing(true);
     
-    // Simulate a small delay for UX
-    setTimeout(() => {
+    try {
+      // Update document metadata in database
+      if (uploadedFile.documentId) {
+        console.log('Updating metadata for document:', uploadedFile.documentId);
+        console.log('Metadata to send:', { title, level, subject, year: new Date().getFullYear() });
+        
+        const token = authService.getToken();
+        const response = await fetch(`${API_URL}/documents/${uploadedFile.documentId}/metadata`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title,
+            level,
+            subject,
+            year: new Date().getFullYear(),
+          }),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('Metadata updated successfully:', result);
+        } else {
+          const error = await response.text();
+          console.error('Failed to update metadata:', error);
+        }
+      }
+
+      // Add to localStorage resources
       addResource({
         title,
         subject,
@@ -321,8 +358,27 @@ export default function UploadPage() {
       });
       
       setCurrentStep(3);
+    } catch (error) {
+      console.error('Failed to update metadata:', error);
+      // Continue anyway - at least save to localStorage
+      addResource({
+        title,
+        subject,
+        level,
+        type,
+        keywords,
+        description,
+        license,
+        price,
+        fileUrl: uploadedFile.fileUrl,
+        fileName: uploadedFile.fileName,
+        fid: uploadedFile.fid,
+        fileSize: uploadedFile.size,
+      });
+      setCurrentStep(3);
+    } finally {
       setIsPublishing(false);
-    }, 500);
+    }
   };
 
   const goToNextStep = () => {

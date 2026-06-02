@@ -1,9 +1,13 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index, OneToMany } from 'typeorm';
 import { DocumentStatus } from '../document.interface';
+import { ExamQuestionEntity } from '../../exam-pipeline/entities/exam-question.entity';
 
 @Entity('documents')
 @Index(['userId', 'status'])
 @Index(['status', 'createdAt'])
+@Index(['level'])
+@Index(['subject'])
+@Index(['year'])
 export class DocumentEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -38,6 +42,19 @@ export class DocumentEntity {
   @Column({ nullable: true, type: 'text' })
   errorMessage?: string;
 
+  // Exam metadata fields
+  @Column({ nullable: true, type: 'varchar', length: 500 })
+  title?: string;
+
+  @Column({ nullable: true, type: 'varchar', length: 100 })
+  level?: string;
+
+  @Column({ nullable: true, type: 'varchar', length: 100 })
+  subject?: string;
+
+  @Column({ nullable: true, type: 'int' })
+  year?: number;
+
   @CreateDateColumn()
   createdAt: Date;
 
@@ -46,4 +63,8 @@ export class DocumentEntity {
 
   @Column({ nullable: true })
   processedAt?: Date;
+
+  // Reverse relation to questions
+  @OneToMany(() => ExamQuestionEntity, question => question.document)
+  questions: ExamQuestionEntity[];
 }
