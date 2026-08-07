@@ -1,10 +1,11 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentsService } from './documents.service';
 import { OCRService } from './ocr.service';
 import { UploadService } from '../upload/upload.service';
 import { DocumentStatus } from './document.interface';
 import { ExamPipelineService } from '../exam-pipeline/exam-pipeline.service';
+import { ModerationService } from '../moderation/moderation.service';
 
 @Injectable()
 export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
@@ -19,6 +20,8 @@ export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
     private readonly uploadService: UploadService,
     private readonly configService: ConfigService,
     private readonly examPipelineService: ExamPipelineService,
+    @Inject(forwardRef(() => ModerationService))
+    private readonly moderationService: ModerationService,
   ) {
     // Poll every 5 seconds by default
     this.pollIntervalMs = this.configService.get<number>('DOCUMENT_POLL_INTERVAL_MS', 5000);
@@ -118,26 +121,26 @@ export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
           if (pipelineResult.metadata) {
             const currentDoc = await this.documentsService.findById(document.id);
             
-            // Only update fields that are currently null (not manually set)
-            const titleToSave = currentDoc.title || pipelineResult.metadata.title;
-            const levelToSave = currentDoc.level || pipelineResult.metadata.level;
-            const subjectToSave = currentDoc.subject || pipelineResult.metadata.subject;
-            const yearToSave = currentDoc.year || pipelineResult.metadata.year;
-            
-            this.logger.log('Updating document with exam metadata (preserving manual values):', {
-              title: titleToSave,
-              level: levelToSave,
-              subject: subjectToSave,
-              year: yearToSave,
-            });
-            
-            await this.documentsService.updateExamMetadata(
-              document.id,
-              titleToSave,
-              levelToSave,
-              subjectToSave,
-              yearToSave,
-            );
+            if (currentDoc) {
+              // Only update fields that are currently null (not manually set)
+              const titleToSave = currentDoc.title || pipelineResult.metadata.title;
+              const levelToSave = currentDoc.level || pipelineResult.metadata.level;
+              const subjectToSave = currentDoc.subject || pipelineResult.metadata.subject;
+              const yearToSave = currentDoc.year || pipelineResult.metadata.year;
+              
+              this.logger.log('Updating document with exam metadata (preserving manual values):', {
+                title: titleToSave,
+                level: levelToSave,
+                subject: subjectToSave,
+                year: yearToSave,
+              });
+              
+              await this.documentsService.updateMetadata(document.id, {
+                title: titleToSave,
+                subject: subjectToSave,
+                year: yearToSave,
+              });
+            }
           }
 
           if (pipelineResult.errors.length > 0) {
@@ -157,6 +160,22 @@ export class DocumentProcessorService implements OnModuleInit, OnModuleDestroy {
           document.id,
           DocumentStatus.COMPLETED,
         );
+
+        // Step 8: Trigger AI Moderation (async, non-blocking)
+        this.logger.log(`Triggering AI moderation for document: ${document.id}`);
+        try {
+          // Extract text from OCR result for moderation
+          const ocrText = ocrResult.pages.map((page) => page.text).join('\n\n');
+          
+          // Set document verification status to under_review
+          await this.documentsService.updateVerificationStatus(document.id, 'under_review');
+          
+          await this.moderationService.createModerationForDocument(document.id, ocrText);
+          this.logger.log(`AI moderation triggered for document ${document.id}`);
+        } catch (moderationError) {
+          // Log but don't fail document if moderation fails
+          this.logger.error(`Failed to trigger moderation for document ${document.id}:`, moderationError);
+        }
 
         this.logger.log(`Document ${document.id} processed successfully`);
       } catch (error) {

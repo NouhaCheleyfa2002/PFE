@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Sparkles, IdCard, Loader2 } from "lucide-react";
+import { Check, Sparkles, IdCard, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { authService } from "@/lib/auth";
 
 /* ── types ── */
@@ -10,8 +10,47 @@ type Mode = "login" | "register";
 type Role = "teacher" | "student";
 
 /* ── static data ── */
-const REGIONS     = ["Tunis", "Sousse", "Sfax", "Monastir", "Bizerte", "Gabès", "Kairouan", "Nabeul"];
-const SPECIALTIES = ["Cardiology", "Neurology", "Pediatrics", "Surgery", "Internal Medicine", "Radiology", "Oncology", "Emergency Medicine"];
+const REGIONS = ["Tunis", "Sousse", "Sfax", "Monastir", "Bizerte", "Gabès", "Kairouan", "Nabeul", "Ariana", "Ben Arous", "Manouba", "Zaghouan", "Jendouba", "Kef", "Siliana", "Béja", "Kasserine", "Sidi Bouzid", "Gafsa", "Tozeur", "Kebili", "Tataouine", "Medenine", "Mahdia"];
+
+const EDUCATION_SPECIALTIES = [
+  // Primary Education
+  "Primary Education",
+  "Early Childhood Education",
+  
+  // Secondary Education - Humanities
+  "Arabic Language and Literature",
+  "French Language and Literature",
+  "English Language and Literature",
+  "German Language",
+  "Spanish Language",
+  "History and Geography",
+  "Islamic Education",
+  "Philosophy",
+  
+  // Secondary Education - Sciences
+  "Mathematics",
+  "Physics",
+  "Chemistry",
+  "Life and Earth Sciences (SVT)",
+  "Computer Science (Informatique)",
+  "Technology",
+  
+  // Secondary Education - Economics
+  "Economics and Management",
+  "Accounting",
+  
+  // Secondary Education - Arts
+  "Arts and Design",
+  "Music Education",
+  "Physical Education and Sports",
+  
+  // Special Needs
+  "Special Education",
+  "Educational Psychology",
+  
+  // Other
+  "Other"
+];
 
 /* ── small reusable pieces ── */
 function Label({ children }: { children: React.ReactNode }) {
@@ -107,6 +146,27 @@ export default function AuthScreen() {
   const [form, setForm] = useState({ email: "", password: "", fullName: "", university: "", specialty: "", region: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Helper function for password strength
+  const getPasswordStrength = (password: string): number => {
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (/[A-Z]/.test(password) && /[a-z]/.test(password)) strength++;
+    if (/\d/.test(password)) strength++;
+    if (/[@$!%*?&]/.test(password)) strength++;
+    return strength;
+  };
+
+  const isPasswordValid = (password: string): boolean => {
+    return (
+      password.length >= 8 &&
+      /[A-Z]/.test(password) &&
+      /[a-z]/.test(password) &&
+      /\d/.test(password) &&
+      /[@$!%*?&]/.test(password)
+    );
+  };
 
   const set = (k: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -136,6 +196,12 @@ export default function AuthScreen() {
   };
 
   const handleRegister = async () => {
+    // Validate password before submitting
+    if (!isPasswordValid(form.password)) {
+      setError("Password must be at least 8 characters and contain uppercase, lowercase, number, and special character (@$!%*?&)");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     
@@ -150,10 +216,11 @@ export default function AuthScreen() {
         specialty: form.specialty,
       });
       
-      // Redirect based on role
+      // Redirect to dashboard - teachers can verify later
       if (result.user.role === "student") {
         router.push("/student/library");
       } else {
+        // Teacher goes to dashboard, can verify from profile
         router.push("/dashboard");
       }
     } catch (err) {
@@ -231,17 +298,125 @@ export default function AuthScreen() {
       </div>
       <div className="mb-4"><Label>Full Name</Label><Input placeholder="Dr. Amira Ben Ali" value={form.fullName} onChange={set("fullName")} /></div>
       <div className="mb-4"><Label>Email</Label><Input type="email" placeholder="you@university.tn" value={form.email} onChange={set("email")} /></div>
-      <div className="mb-4"><Label>Password</Label><Input type="password" placeholder="••••••••" value={form.password} onChange={set("password")} /></div>
-      <PrimaryBtn onClick={() => setStep(2)}>Continue →</PrimaryBtn>
+      
+      <div className="mb-4">
+        <Label>Password</Label>
+        <Input type="password" placeholder="••••••••" value={form.password} onChange={set("password")} />
+        
+        {/* Password Strength Indicator */}
+        {form.password && (
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-1">
+              {[1, 2, 3, 4].map((level) => (
+                <div
+                  key={level}
+                  className={`h-1 flex-1 rounded-full transition-colors ${
+                    level <= getPasswordStrength(form.password)
+                      ? getPasswordStrength(form.password) === 1
+                        ? "bg-red-500"
+                        : getPasswordStrength(form.password) === 2
+                        ? "bg-yellow-500"
+                        : getPasswordStrength(form.password) === 3
+                        ? "bg-blue-500"
+                        : "bg-green-500"
+                      : "bg-gray-200"
+                  }`}
+                />
+              ))}
+            </div>
+            <p className={`text-xs font-medium ${
+              getPasswordStrength(form.password) === 1 ? "text-red-600" :
+              getPasswordStrength(form.password) === 2 ? "text-yellow-600" :
+              getPasswordStrength(form.password) === 3 ? "text-blue-600" :
+              "text-green-600"
+            }`}>
+              {getPasswordStrength(form.password) === 1 && "Weak password"}
+              {getPasswordStrength(form.password) === 2 && "Fair password"}
+              {getPasswordStrength(form.password) === 3 && "Good password"}
+              {getPasswordStrength(form.password) === 4 && "Strong password"}
+            </p>
+          </div>
+        )}
+
+        {/* Password Requirements Checklist */}
+        {form.password && (
+          <div className="mt-3 space-y-1.5 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="flex items-center gap-2 text-xs">
+              {form.password.length >= 8 ? (
+                <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              )}
+              <span className={form.password.length >= 8 ? "text-green-700" : "text-gray-600"}>
+                At least 8 characters
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {/[A-Z]/.test(form.password) ? (
+                <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              )}
+              <span className={/[A-Z]/.test(form.password) ? "text-green-700" : "text-gray-600"}>
+                One uppercase letter
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {/[a-z]/.test(form.password) ? (
+                <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              )}
+              <span className={/[a-z]/.test(form.password) ? "text-green-700" : "text-gray-600"}>
+                One lowercase letter
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {/\d/.test(form.password) ? (
+                <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              )}
+              <span className={/\d/.test(form.password) ? "text-green-700" : "text-gray-600"}>
+                One number
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {/[@$!%*?&]/.test(form.password) ? (
+                <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              )}
+              <span className={/[@$!%*?&]/.test(form.password) ? "text-green-700" : "text-gray-600"}>
+                One special character (@$!%*?&)
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      <PrimaryBtn 
+        onClick={() => {
+          if (!isPasswordValid(form.password)) {
+            setError("Please ensure your password meets all requirements");
+            return;
+          }
+          setError(null);
+          setStep(2);
+        }}
+        disabled={!form.fullName || !form.email || !isPasswordValid(form.password)}
+      >
+        Continue →
+      </PrimaryBtn>
     </>
   );
 
   const Step2 = (
     <>
       <div className="grid grid-cols-2 gap-3 mb-4">
-        <div><Label>University</Label><Input placeholder="Faculté de Médecine…" value={form.university} onChange={set("university")} /></div>
+        <div><Label>Institution / School</Label><Input placeholder="e.g., Lycée Pilote de Tunis…" value={form.university} onChange={set("university")} /></div>
         <div>
-          <Label>Region</Label>
+          <Label>Governorate</Label>
           <Select value={form.region} onChange={set("region")}>
             <option value="">Select…</option>
             {REGIONS.map((r) => <option key={r}>{r}</option>)}
@@ -249,10 +424,10 @@ export default function AuthScreen() {
         </div>
       </div>
       <div className="mb-4">
-        <Label>Specialty</Label>
+        <Label>Specialty / Subject</Label>
         <Select value={form.specialty} onChange={set("specialty")}>
-          <option value="">Select specialty…</option>
-          {SPECIALTIES.map((s) => <option key={s}>{s}</option>)}
+          <option value="">Select your teaching specialty…</option>
+          {EDUCATION_SPECIALTIES.map((s) => <option key={s}>{s}</option>)}
         </Select>
       </div>
       <PrimaryBtn onClick={() => setStep(3)}>Continue →</PrimaryBtn>
@@ -267,17 +442,36 @@ export default function AuthScreen() {
           {error}
         </div>
       )}
-      <div className="border-2 border-dashed border-[#dde2ef] rounded-[12px] p-7 text-center bg-[#f9faff] hover:border-[#63b3ed] transition-colors cursor-pointer mb-4">
-        <div className="flex justify-center mb-2.5 text-[#63b3ed]">
-          <IdCard className="w-9 h-9" />
+      <div className="bg-[#f0f4ff] border border-[#dde2ef] rounded-[12px] p-5 mb-5">
+        <div className="flex items-start gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-[#63b3ed] bg-opacity-20 flex items-center justify-center shrink-0">
+            <Check className="w-5 h-5 text-[#63b3ed]" />
+          </div>
+          <div>
+            <h3 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-[16px] font-bold text-[#0d1b3e] mb-1">
+              Almost there!
+            </h3>
+            <p className="text-[13px] text-[#4a5568] leading-relaxed">
+              Your educator account will be created. You can start exploring immediately.
+            </p>
+          </div>
         </div>
-        <p className="text-[14px] font-semibold text-[#0d1b3e] mb-1">Upload Professional ID Card</p>
-        <p className="text-[12px] text-[#8899bb] leading-relaxed">JPEG, PNG or PDF · Max 5 MB<br />Our AI verifies your identity automatically</p>
+        <div className="flex items-start gap-3 bg-white bg-opacity-60 rounded-lg p-3">
+          <IdCard className="w-5 h-5 text-[#63b3ed] shrink-0 mt-0.5" />
+          <div>
+            <p className="text-[13px] text-[#0d1b3e] font-medium mb-1">
+              Verification Required for Full Access
+            </p>
+            <p className="text-[12px] text-[#8899bb] leading-relaxed">
+              To upload resources and create exams, you'll need to verify your educator account. 
+              You can do this anytime from your profile settings.
+            </p>
+          </div>
+        </div>
       </div>
-      <p className="text-[12px] text-[#aab4cc] leading-relaxed mb-4">
-        Your card is used only for one-time identity verification and is never stored or shared publicly.
-      </p>
-      <PrimaryBtn onClick={handleRegister} loading={loading}>Submit for Verification <Sparkles className="w-4 h-4 inline" /></PrimaryBtn>
+      <PrimaryBtn onClick={handleRegister} loading={loading}>
+        Create Account → 
+      </PrimaryBtn>
       <GhostBtn onClick={() => setStep(2)}>← Back</GhostBtn>
     </>
   ) : (
@@ -287,9 +481,18 @@ export default function AuthScreen() {
           {error}
         </div>
       )}
-      <h3 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-[20px] font-bold text-[#0d1b3e] mb-2">You're all set!</h3>
-      <p className="text-[14px] text-[#8899bb] mb-6">Your student account is ready. Start exploring resources from verified educators.</p>
-      <PrimaryBtn onClick={handleRegister} loading={loading}>Go to Library →</PrimaryBtn>
+      <div className="w-16 h-16 rounded-full bg-[#10b981] bg-opacity-10 flex items-center justify-center mx-auto mb-4">
+        <Check className="w-8 h-8 text-[#10b981]" />
+      </div>
+      <h3 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-[20px] font-bold text-[#0d1b3e] mb-2">
+        You're all set!
+      </h3>
+      <p className="text-[14px] text-[#8899bb] mb-6">
+        Your student account is ready. Start exploring resources from verified educators.
+      </p>
+      <PrimaryBtn onClick={handleRegister} loading={loading}>
+        Go to Library →
+      </PrimaryBtn>
     </div>
   );
 

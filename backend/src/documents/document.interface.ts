@@ -11,11 +11,31 @@ export interface Document {
   updatedAt: Date;
   processedAt?: Date;
   errorMessage?: string;
-  // Exam metadata
-  title?: string;
-  level?: string;
-  subject?: string;
-  year?: number;
+  // Exam metadata (legacy fields)
+  title?: string | null;
+  level?: string | null;
+  subject?: string | null;
+  year?: number | null;
+  // Enhanced metadata (Phase 2)
+  classLevel?: string | null;
+  resourceType?: string;
+  keywords?: string[] | null;
+  description?: string | null;
+  license?: string | null;
+  price?: number | null;
+  isVerified?: boolean;
+  bacSection?: string | null; // Tunisian Bac Section (Phase 4)
+  // Content Verification (Phase 3)
+  verificationStatus?: string | null;
+  verifiedBy?: string | null;
+  verifiedAt?: Date | null;
+  rejectionReason?: string | null;
+  // Stats and ratings
+  views?: number;
+  downloads?: number;
+  averageRating?: number;
+  totalRatings?: number;
+  bookmarkCount?: number;
 }
 
 export enum DocumentStatus {
@@ -35,5 +55,14 @@ export interface OCRResult {
 export interface OCRPage {
   page: number;
   text: string;
+  confidence?: number;
+  figures?: OCRFigure[];
+}
+
+export interface OCRFigure {
+  id: string;
+  caption?: string | null;
+  boundingBox: number[]; // Polygon coordinates
+  pageNumber: number;
   confidence?: number;
 }

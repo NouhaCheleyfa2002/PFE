@@ -2,6 +2,8 @@ import { Geist_Mono, Inter, Syne } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { WebSocketProvider } from "@/lib/websocket-context"
+import { Toaster } from "react-hot-toast"
 import { cn } from "@/lib/utils";
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
@@ -30,7 +32,12 @@ export default function RootLayout({
       className={cn("antialiased", fontMono.variable, inter.variable, syne.variable)}
     >
       <body className="font-sans">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <WebSocketProvider>
+            {children}
+            <Toaster />
+          </WebSocketProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

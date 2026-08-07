@@ -23,10 +23,14 @@ export interface Question {
   category: string;
   difficulty: number;      // 1-10
   points: number;
+  level?: string;          // Education level
   options?: McqOption[];    // mcq
   correctAnswer?: string;  // mcq / true_false
   blanks?: string[];        // fill_blank – text with ___
   imageUrl?: string;        // image-based
+  imageCaption?: string;    // Caption for the image
+  imageWidth?: number;      // Image width in pixels
+  imageAlign?: 'left' | 'center' | 'right';  // Image alignment
   matchPairs?: MatchPair[]; // match
   lines?: number;           // open – number of answer lines
 }

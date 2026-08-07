@@ -10,15 +10,20 @@ import {
   useRef,
 } from "react";
 import { Question } from "@/lib/types/question";
+import { EducationLevel } from "@/lib/education-config";
 
 interface ExamState {
   title: string;
+  classLevel: EducationLevel | "";
+  subject: string;
   duration: string;
   instructions: string;
   questions: Question[];
+  templateId?: string | null;
+  maxPoints?: number | null;
 }
 
-export type PreviewMode = "edit" | "student" | "mobile";
+export type PreviewMode = "edit" | "student";
 
 interface ExamContextType {
   exam: ExamState;
@@ -27,8 +32,12 @@ interface ExamContextType {
   previewMode: PreviewMode;
   setPreviewMode: (mode: PreviewMode) => void;
   setTitle: (title: string) => void;
+  setClassLevel: (level: EducationLevel | "") => void;
+  setSubject: (subject: string) => void;
   setDuration: (duration: string) => void;
   setInstructions: (instructions: string) => void;
+  setTemplateId: (templateId: string | null) => void;
+  setMaxPoints: (maxPoints: number | null) => void;
   addQuestion: (question: Question) => void;
   removeQuestion: (id: string) => void;
   reorderQuestions: (activeId: string, overId: string) => void;
@@ -38,6 +47,8 @@ interface ExamContextType {
   isQuestionAdded: (id: string) => boolean;
   totalPoints: number;
   validationErrors: Record<string, string[]>;
+  canAddQuestion: (points: number) => boolean;
+  pointsRemaining: number;
 }
 
 const ExamContext = createContext<ExamContextType | undefined>(undefined);
@@ -46,9 +57,13 @@ const STORAGE_KEY = "exam_builder_v2";
 
 const initialState: ExamState = {
   title: "Untitled Exam",
+  classLevel: "",
+  subject: "",
   duration: "",
   instructions: "",
   questions: [],
+  templateId: null,
+  maxPoints: null,
 };
 
 function validateQuestions(questions: Question[]): Record<string, string[]> {
@@ -99,9 +114,19 @@ export function ExamProvider({ children }: { children: ReactNode }) {
   }, [exam]);
 
   const setTitle = useCallback((title: string) => setExam((p) => ({ ...p, title })), []);
+  const setClassLevel = useCallback((classLevel: EducationLevel | "") => setExam((p) => ({ ...p, classLevel })), []);
+  const setSubject = useCallback((subject: string) => setExam((p) => ({ ...p, subject })), []);
   const setDuration = useCallback((duration: string) => setExam((p) => ({ ...p, duration })), []);
   const setInstructions = useCallback(
     (instructions: string) => setExam((p) => ({ ...p, instructions })),
+    []
+  );
+  const setTemplateId = useCallback(
+    (templateId: string | null) => setExam((p) => ({ ...p, templateId })),
+    []
+  );
+  const setMaxPoints = useCallback(
+    (maxPoints: number | null) => setExam((p) => ({ ...p, maxPoints })),
     []
   );
 
@@ -135,6 +160,17 @@ export function ExamProvider({ children }: { children: ReactNode }) {
     setExam((p) => {
       const src = p.questions.find((q) => q.id === id);
       if (!src) return p;
+      
+      // Check if duplicating would exceed max points
+      if (p.maxPoints) {
+        const currentTotal = p.questions.reduce((s, q) => s + (q.points || 0), 0);
+        if (currentTotal + src.points > p.maxPoints) {
+          // Don't duplicate - would exceed limit
+          alert(`Cannot duplicate question! This would exceed the maximum points limit by ${currentTotal + src.points - p.maxPoints} pts.`);
+          return p;
+        }
+      }
+      
       const idx = p.questions.findIndex((q) => q.id === id);
       const clone: Question = { ...src, id: `${src.id}_dup_${Date.now()}` };
       const arr = [...p.questions];
@@ -164,6 +200,14 @@ export function ExamProvider({ children }: { children: ReactNode }) {
 
   const totalPoints = exam.questions.reduce((s, q) => s + (q.points || 0), 0);
   const validationErrors = validateQuestions(exam.questions);
+  const pointsRemaining = exam.maxPoints ? exam.maxPoints - totalPoints : Infinity;
+  const canAddQuestion = useCallback(
+    (points: number) => {
+      if (!exam.maxPoints) return true;
+      return totalPoints + points <= exam.maxPoints;
+    },
+    [exam.maxPoints, totalPoints]
+  );
 
   return (
     <ExamContext.Provider
@@ -174,8 +218,12 @@ export function ExamProvider({ children }: { children: ReactNode }) {
         previewMode,
         setPreviewMode,
         setTitle,
+        setClassLevel,
+        setSubject,
         setDuration,
         setInstructions,
+        setTemplateId,
+        setMaxPoints,
         addQuestion,
         removeQuestion,
         reorderQuestions,
@@ -185,6 +233,8 @@ export function ExamProvider({ children }: { children: ReactNode }) {
         isQuestionAdded,
         totalPoints,
         validationErrors,
+        canAddQuestion,
+        pointsRemaining,
       }}
     >
       {children}

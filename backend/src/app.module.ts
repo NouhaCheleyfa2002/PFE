@@ -12,6 +12,16 @@ import { QuestionsModule } from './questions/questions.module';
 import { DocumentsModule } from './documents/documents.module';
 import { AiModule } from './ai/ai.module';
 import { ExamPipelineModule } from './exam-pipeline/exam-pipeline.module';
+import { EducationSystemModule } from './education-system/education-system.module';
+import { ProfileModule } from './profile/profile.module';
+import { VerificationModule } from './verification/verification.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { UserNotificationsModule } from './user-notifications/user-notifications.module';
+import { RatingsModule } from './ratings/ratings.module';
+import { BookmarksModule } from './bookmarks/bookmarks.module';
+import { PurchasesModule } from './purchases/purchases.module';
+import { ModerationModule } from './moderation/moderation.module';
+import { TemplatesModule } from './templates/templates.module';
 import { getTypeOrmConfig } from './config/typeorm.config';
 
 @Module({
@@ -40,6 +50,16 @@ import { getTypeOrmConfig } from './config/typeorm.config';
     DocumentsModule,
     AiModule,
     ExamPipelineModule,
+    EducationSystemModule,
+    ProfileModule,
+    VerificationModule,
+    AnalyticsModule,
+    UserNotificationsModule,
+    RatingsModule,
+    BookmarksModule,
+    PurchasesModule,
+    ModerationModule,
+    TemplatesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

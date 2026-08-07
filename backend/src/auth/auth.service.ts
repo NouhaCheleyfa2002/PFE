@@ -1,20 +1,24 @@
 import { Injectable, ConflictException, UnauthorizedException, Logger, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { randomUUID } from 'crypto';
 import { User } from './interfaces/user.interface';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
+import { UserEntity } from './entities/user.entity';
+import { UserNotificationsService } from '../user-notifications/user-notifications.service';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
-  // In-memory user store (replace with database in production)
-  private users: User[] = [];
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    private readonly userNotificationsService: UserNotificationsService,
   ) {}
 
   async onModuleInit() {
@@ -31,19 +35,18 @@ export class AuthService implements OnModuleInit {
     if (!adminEmail || !adminPassword) {
       this.logger.warn('ADMIN_EMAIL or ADMIN_PASSWORD not set – skipping admin seed');
     } else {
-      const existingAdmin = this.users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase());
+      const existingAdmin = await this.userRepository.findOne({ where: { email: adminEmail.toLowerCase() } });
       if (!existingAdmin) {
         const hashedPassword = await bcrypt.hash(adminPassword, 10);
-        const admin: User = {
-          id: randomUUID(),
+        const admin = this.userRepository.create({
           email: adminEmail.toLowerCase(),
           password: hashedPassword,
           fullName: 'Administrator',
           role: 'admin',
           verified: true,
-          createdAt: new Date(),
-        };
-        this.users.push(admin);
+          verificationStatus: 'verified',
+        });
+        await this.userRepository.save(admin);
         this.logger.log(`Admin account created: ${adminEmail}`);
       } else {
         this.logger.log('Admin account already exists');
@@ -54,11 +57,10 @@ export class AuthService implements OnModuleInit {
     if (!teacherEmail || !teacherPassword) {
       this.logger.warn('TEACHER_EMAIL or TEACHER_PASSWORD not set – skipping teacher seed');
     } else {
-      const existingTeacher = this.users.find(u => u.email.toLowerCase() === teacherEmail.toLowerCase());
+      const existingTeacher = await this.userRepository.findOne({ where: { email: teacherEmail.toLowerCase() } });
       if (!existingTeacher) {
         const hashedPassword = await bcrypt.hash(teacherPassword, 10);
-        const teacher: User = {
-          id: randomUUID(),
+        const teacher = this.userRepository.create({
           email: teacherEmail.toLowerCase(),
           password: hashedPassword,
           fullName: 'Dr. Sarah Khalil',
@@ -67,9 +69,9 @@ export class AuthService implements OnModuleInit {
           region: 'Tunis',
           specialty: 'Cardiology',
           verified: true,
-          createdAt: new Date(),
-        };
-        this.users.push(teacher);
+          verificationStatus: 'verified',
+        });
+        await this.userRepository.save(teacher);
         this.logger.log(`Teacher account created: ${teacherEmail}`);
       } else {
         this.logger.log('Teacher account already exists');
@@ -77,13 +79,17 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  getUsers(): Omit<User, 'password'>[] {
-    return this.users.map(({ password, ...u }) => u);
+  async getUsers(): Promise<Omit<User, 'password'>[]> {
+    const users = await this.userRepository.find();
+    return users.map(({ password, ...u }) => u as any);
   }
 
   async register(registerDto: RegisterDto): Promise<{ user: Omit<User, 'password'>; access_token: string }> {
     // Check if user already exists
-    const existingUser = this.users.find(u => u.email.toLowerCase() === registerDto.email.toLowerCase());
+    const existingUser = await this.userRepository.findOne({ 
+      where: { email: registerDto.email.toLowerCase() } 
+    });
+    
     if (existingUser) {
       throw new ConflictException('An account with this email already exists');
     }
@@ -93,8 +99,7 @@ export class AuthService implements OnModuleInit {
     const hashedPassword = await bcrypt.hash(registerDto.password, saltRounds);
 
     // Create new user
-    const newUser: User = {
-      id: randomUUID(),
+    const newUser = this.userRepository.create({
       email: registerDto.email.toLowerCase(),
       password: hashedPassword,
       fullName: registerDto.fullName,
@@ -103,23 +108,47 @@ export class AuthService implements OnModuleInit {
       region: registerDto.region,
       specialty: registerDto.specialty,
       verified: registerDto.role === 'student', // Students auto-verified, teachers need verification
-      createdAt: new Date(),
-    };
+      verificationStatus: registerDto.role === 'student' ? 'verified' : 'unverified',
+    });
 
-    this.users.push(newUser);
+    const savedUser = await this.userRepository.save(newUser);
+
+    // Send welcome notification
+    try {
+      await this.userNotificationsService.notifyAccountCreated(
+        savedUser.id,
+        savedUser.fullName
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to send account creation notification: ${error.message}`);
+    }
+
+    // Notify admins about new user registration
+    try {
+      await this.userNotificationsService.notifyNewUserRegistration(
+        savedUser.fullName,
+        savedUser.role,
+        savedUser.id
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to send admin registration notification: ${error.message}`);
+    }
 
     // Generate JWT
-    const payload = { sub: newUser.id, email: newUser.email, role: newUser.role };
+    const payload = { sub: savedUser.id, email: savedUser.email, role: savedUser.role };
     const access_token = this.jwtService.sign(payload);
 
     // Return user without password
-    const { password, ...userWithoutPassword } = newUser;
-    return { user: userWithoutPassword, access_token };
+    const { password, ...userWithoutPassword } = savedUser;
+    return { user: userWithoutPassword as any, access_token };
   }
 
   async login(loginDto: LoginDto): Promise<{ user: Omit<User, 'password'>; access_token: string }> {
     // Find user by email
-    const user = this.users.find(u => u.email.toLowerCase() === loginDto.email.toLowerCase());
+    const user = await this.userRepository.findOne({ 
+      where: { email: loginDto.email.toLowerCase() } 
+    });
+    
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -136,18 +165,49 @@ export class AuthService implements OnModuleInit {
 
     // Return user without password
     const { password, ...userWithoutPassword } = user;
-    return { user: userWithoutPassword, access_token };
+    return { user: userWithoutPassword as any, access_token };
   }
 
   async validateUser(userId: string): Promise<Omit<User, 'password'> | null> {
-    const user = this.users.find(u => u.id === userId);
+    const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) return null;
     
     const { password, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    return userWithoutPassword as any;
   }
 
-  async findByEmail(email: string): Promise<User | undefined> {
-    return this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  async findByEmail(email: string): Promise<UserEntity | null> {
+    return this.userRepository.findOne({ where: { email: email.toLowerCase() } });
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    // Hash new password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    // Update password
+    user.password = hashedPassword;
+    await this.userRepository.save(user);
+
+    this.logger.log(`Password changed for user: ${user.email}`);
+
+    // Send password changed notification
+    try {
+      await this.userNotificationsService.notifyPasswordChanged(user.id);
+    } catch (error) {
+      this.logger.warn(`Failed to send password change notification: ${error.message}`);
+    }
   }
 }

@@ -13,7 +13,7 @@ const nextConfig = {
     },
   },
   
-  // Webpack fallback for when not using Turbopack
+  // Webpack configuration
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
@@ -23,7 +23,25 @@ const nextConfig = {
         tls: false,
         canvas: false,
       };
+      
+      // Fix for react-pdf and pdfjs-dist
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        canvas: false,
+      };
     }
+    
+    // Handle pdfjs-dist worker
+    config.module = config.module || {};
+    config.module.rules = config.module.rules || [];
+    config.module.rules.push({
+      test: /pdf\.worker\.(min\.)?js/,
+      type: "asset/resource",
+      generator: {
+        filename: "static/worker/[hash][ext][query]",
+      },
+    });
+    
     return config;
   },
 }

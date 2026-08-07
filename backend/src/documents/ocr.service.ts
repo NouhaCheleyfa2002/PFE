@@ -115,11 +115,38 @@ export class OCRService {
       for (const page of azureResult.analyzeResult.pages) {
         const pageText = page.lines?.map((line: any) => line.content).join('\n') || '';
         
+        // Extract figures/images information from Azure result
+        const figures: any[] = [];
+        if (azureResult.analyzeResult.figures) {
+          // Azure provides figure bounding regions and page references
+          const pageFigures = azureResult.analyzeResult.figures.filter((fig: any) => 
+            fig.boundingRegions?.some((region: any) => region.pageNumber === page.pageNumber)
+          );
+          
+          for (const figure of pageFigures) {
+            const boundingRegion = figure.boundingRegions?.find((r: any) => r.pageNumber === page.pageNumber);
+            if (boundingRegion) {
+              figures.push({
+                id: figure.id || `figure-${figures.length + 1}`,
+                caption: figure.caption?.content || null,
+                boundingBox: boundingRegion.polygon || [],
+                pageNumber: page.pageNumber,
+                confidence: figure.confidence || 0.9,
+              });
+            }
+          }
+        }
+        
         pages.push({
           page: page.pageNumber,
           text: pageText,
           confidence: page.confidence,
+          figures: figures.length > 0 ? figures : undefined,
         });
+        
+        if (figures.length > 0) {
+          this.logger.log(`Page ${page.pageNumber}: Extracted ${figures.length} figures`);
+        }
       }
     }
 

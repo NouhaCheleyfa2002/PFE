@@ -21,8 +21,10 @@ export interface Question {
   type: QuestionType;
   text: string;
   category: string;
+  subject?: string;
   difficulty: number;
   points: number;
+  level?: string;
   options?: McqOption[];
   correctAnswer?: string;
   blanks?: string[];

@@ -11,12 +11,7 @@ services:
       - "8000:8000"
     networks:
       - edushare-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+ 
       
   # PostgreSQL Database
   postgres:
@@ -62,7 +57,9 @@ services:
 
   seaweed-filer:
     image: chrislusf/seaweedfs
-    command: "filer -master=seaweed-master:9333 -ip=seaweed-filer"
+    command: "filer -master=seaweed-master:9333 -ip=seaweed-filer -defaultReplicaPlacement=000"
+    environment:
+      - WEED_FILER_OPTIONS_DOWNLOAD_DISPOSITION=inline
     ports:
       - "8888:8888"   # Filer API & UI 
       - "8111:8111"   # Optional metrics

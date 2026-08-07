@@ -2,7 +2,6 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useResources } from "@/lib/resources-context";
 import { authService } from "@/lib/auth";
 import {
   Upload,
@@ -26,36 +25,23 @@ import {
   RefreshCw,
   Download,
 } from "lucide-react";
+import { DocumentPreview } from "@/components/preview/DocumentPreview";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
-const SUBJECTS = [
-  "Cardiology",
-  "Neurology",
-  "Pediatrics",
-  "Surgery",
-  "Internal Medicine",
-  "Radiology",
-  "Oncology",
-  "Emergency Medicine",
-];
-const LEVELS = [
-  "1st Year",
-  "2nd Year",
-  "3rd Year",
-  "4th Year",
-  "5th Year",
-  "Master",
-  "Residency",
-];
-const TYPES = [
-  "Course Notes",
-  "QCM",
-  "Case Study",
-  "Exam",
-  "Video Lecture",
-  "Presentation",
-];
+import {
+  EDUCATION_LEVELS,
+  BAC_SECTIONS,
+  getSubjectsForLevel,
+  getSubjectsForBacSection,
+  requiresBacSection,
+  getDocumentTypesForLevel,
+  type EducationLevel,
+  type BacSection,
+  type ResourceType,
+} from "@/lib/education-config";
+
+const RESOURCE_TYPES: ResourceType[] = ["Course Material", "Exam"];
 
 type UploadStatus = "idle" | "uploading" | "success" | "error";
 
@@ -87,7 +73,6 @@ interface OcrResultData {
 
 export default function UploadPage() {
   const router = useRouter();
-  const { addResource } = useResources();
   
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -108,13 +93,28 @@ export default function UploadPage() {
   const [viewMode, setViewMode] = useState<"upload" | "documents">("upload");
   
   const [title, setTitle] = useState("");
+  const [resourceType, setResourceType] = useState<ResourceType>("Course Material");
+  const [level, setLevel] = useState<EducationLevel | "">("");
+  const [bacSection, setBacSection] = useState<BacSection | "">("");
   const [subject, setSubject] = useState("");
-  const [level, setLevel] = useState("");
-  const [type, setType] = useState("");
+  const [docType, setDocType] = useState("");
+  
+  // State to track if we're waiting for AI metadata extraction
+  const [waitingForAI, setWaitingForAI] = useState(false);
+  const [aiProgress, setAiProgress] = useState("Processing document...");
+  const [aiMetadataReady, setAiMetadataReady] = useState(false);
   const [keywords, setKeywords] = useState("");
   const [description, setDescription] = useState("");
   const [license, setLicense] = useState<"free" | "paid">("free");
   const [price, setPrice] = useState("");
+
+  // Dynamic subjects and types based on selected level
+  const availableSubjects = level 
+    ? (requiresBacSection(level as EducationLevel) && bacSection
+        ? getSubjectsForBacSection(level as EducationLevel, bacSection as BacSection)
+        : getSubjectsForLevel(level as EducationLevel))
+    : [];
+  const availableDocTypes = level ? getDocumentTypesForLevel(level) : [];
 
   const inputRef = useRef<HTMLInputElement>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
@@ -195,8 +195,13 @@ export default function UploadPage() {
     if (currentStep === 2 && title) {
       formData.append("title", title);
       formData.append("subject", subject);
-      formData.append("level", level);
-      if (price) formData.append("year", new Date().getFullYear().toString());
+      formData.append("classLevel", level); // Send as classLevel for backend
+      formData.append("resourceType", resourceType);
+      formData.append("keywords", keywords);
+      formData.append("description", description);
+      formData.append("license", license);
+      if (price) formData.append("price", price);
+      if (level) formData.append("year", new Date().getFullYear().toString());
     }
 
     const xhr = new XMLHttpRequest();
@@ -213,24 +218,35 @@ export default function UploadPage() {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const data = JSON.parse(xhr.responseText);
-          // Backend returns { message, documents: [...] }
-          const uploadedDoc = data.documents && data.documents[0];
+          const uploadedDoc = data.documents?.[0];
           
-          if (uploadedDoc) {
-            setUploadedFile({
+          console.log('Upload response data:', data);
+          console.log('Extracted document:', uploadedDoc);
+          
+          if (uploadedDoc?.id) {
+            const fileInfo = {
               fid: uploadedDoc.id,
-              fileUrl: selectedFile ? URL.createObjectURL(selectedFile) : "",
+              fileUrl: uploadedDoc.storageUrl || "",
               fileName: uploadedDoc.originalName,
               size: selectedFile?.size || 0,
               documentId: uploadedDoc.id,
-            });
+            };
+            
+            console.log('Setting uploadedFile state to:', fileInfo);
+            setUploadedFile(fileInfo);
             setUploadStatus("success");
             
-            // Show message if document was added to processing queue
-            console.log(`Document uploaded: ${uploadedDoc.id}`);
-            // Refresh documents list
+            // Start polling for AI-extracted metadata
+            pollForAIMetadata(uploadedDoc.id);
+            
+            // Verify state was set
+            setTimeout(() => {
+              console.log('uploadedFile state after 100ms:', fileInfo);
+            }, 100);
+            
             fetchDocuments();
           } else {
+            console.error('No document ID in response. data.documents:', data.documents);
             setErrorMessage("Upload succeeded but no document info returned");
             setUploadStatus("error");
           }
@@ -288,6 +304,132 @@ export default function UploadPage() {
     }
   };
 
+  /**
+   * Poll for AI-extracted metadata after upload
+   * This will auto-fill the form with AI-detected metadata
+   */
+  const pollForAIMetadata = async (documentId: string) => {
+    console.log('[AI Metadata] Starting to poll for document:', documentId);
+    setWaitingForAI(true);
+    setAiProgress("AI is analyzing your document...");
+    
+    const token = authService.getToken();
+    if (!token) {
+      console.error('[AI Metadata] No auth token');
+      setWaitingForAI(false);
+      return;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 60; // Poll for up to 60 seconds (AI moderation can take time)
+    
+    const poll = async () => {
+      try {
+        attempts++;
+        console.log(`[AI Metadata] Poll attempt ${attempts}/${maxAttempts}`);
+        
+        const response = await fetch(`${API_URL}/documents/${documentId}/moderation-status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[AI Metadata] Response:', data);
+          console.log('[AI Metadata] Metadata object:', data.metadata);
+          console.log('[AI Metadata] Has moderation:', data.hasModeration);
+          
+          // Check if AI has processed the document (hasModeration: true means AI analysis is complete)
+          // AND metadata has been extracted (title should be different from just filename, subject must exist)
+          if (data.hasModeration && data.metadata && data.metadata.subject) {
+            console.log('[AI Metadata] Metadata ready! Auto-filling form...');
+            console.log('[AI Metadata] Title:', data.metadata.title);
+            console.log('[AI Metadata] Subject:', data.metadata.subject);
+            console.log('[AI Metadata] ClassLevel:', data.metadata.classLevel);
+            console.log('[AI Metadata] ResourceType:', data.metadata.resourceType);
+            console.log('[AI Metadata] BacSection:', data.metadata.bacSection);
+            
+            // Auto-fill form with AI-extracted metadata
+            // IMPORTANT: Set level FIRST, then subject (because subject options depend on level)
+            const aiLevel = data.metadata.classLevel || "";
+            const aiSubject = data.metadata.subject || "";
+            const aiBacSection = data.metadata.bacSection || "";
+            const aiResourceType = data.metadata.resourceType === 'exam' ? 'Exam' : 'Course Material';
+            const aiTitle = data.metadata.title || "";
+            
+            // Set title (if AI extracted something better than filename)
+            if (aiTitle && aiTitle !== uploadedFile?.fileName) {
+              setTitle(aiTitle);
+            }
+            
+            // Set level and bac section
+            if (aiLevel) {
+              setLevel(aiLevel);
+            }
+            if (aiBacSection) {
+              setBacSection(aiBacSection);
+            }
+            
+            // Set resource type
+            setResourceType(aiResourceType);
+            
+            // Wait a bit for level to update, then set subject and other fields
+            setTimeout(() => {
+              if (aiSubject) {
+                setSubject(aiSubject);
+              }
+              
+              if (data.metadata.keywords) {
+                setKeywords(Array.isArray(data.metadata.keywords) ? data.metadata.keywords.join(', ') : '');
+              }
+              
+              if (data.metadata.description) {
+                setDescription(data.metadata.description);
+              }
+              
+              // Set doc type based on resource type
+              if (data.metadata.resourceType === 'exam') {
+                setDocType('exam');
+              } else {
+                setDocType('course');
+              }
+            }, 100);
+            
+            setWaitingForAI(false);
+            setAiMetadataReady(true);
+            setAiProgress("✓ Analysis complete! Review the details below.");
+            
+            // Show duplicate warning if needed
+            if (data.isDuplicate) {
+              setErrorMessage(`⚠️ Warning: This document appears to be ${Math.round((data.duplicateSimilarity || 0) * 100)}% similar to an existing document. Consider if this is truly new content.`);
+            }
+            
+            return;
+          }
+        }
+        
+        // Continue polling if not ready yet
+        if (attempts < maxAttempts) {
+          setAiProgress(`Analyzing document... (${attempts}/${maxAttempts})`);
+          setTimeout(poll, 1000); // Poll every second
+        } else {
+          console.log('[AI Metadata] Polling timeout - proceeding with manual entry');
+          setWaitingForAI(false);
+          setAiProgress("Analysis timed out. Please fill in the details manually.");
+        }
+      } catch (error) {
+        console.error('[AI Metadata] Polling error:', error);
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 1000);
+        } else {
+          setWaitingForAI(false);
+        }
+      }
+    };
+    
+    // Start polling after a short delay to allow processing to begin
+    setTimeout(poll, 2000);
+  };
+
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -304,18 +446,55 @@ export default function UploadPage() {
     return <FileText className="w-6 h-6 text-gray-500" />;
   };
 
-  const isFormValid = title && subject && level && type;
+  const isFormValid = title && resourceType && level && subject && docType && 
+    (!requiresBacSection(level as EducationLevel) || bacSection) && 
+    (license === 'free' || (license === 'paid' && price && parseFloat(price) > 0));
 
   const handlePublish = async () => {
     if (!uploadedFile || !isFormValid) return;
     
+    console.log('=== PUBLISH DEBUG ===');
+    console.log('uploadedFile:', JSON.stringify(uploadedFile, null, 2));
+    console.log('uploadedFile.documentId:', uploadedFile.documentId);
+    console.log('isFormValid:', isFormValid);
+    
+    // Validate price if paid
+    if (license === 'paid' && (!price || parseFloat(price) <= 0)) {
+      setErrorMessage('Please enter a valid price greater than 0');
+      return;
+    }
+    
     setIsPublishing(true);
+    setErrorMessage(null);
+    
+    console.log('handlePublish - uploadedFile:', uploadedFile);
+    console.log('handlePublish - documentId:', uploadedFile.documentId);
     
     try {
-      // Update document metadata in database
-      if (uploadedFile.documentId) {
+      // Update document metadata in database (only if documentId exists and is a valid UUID)
+      if (uploadedFile.documentId && uploadedFile.documentId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
         console.log('Updating metadata for document:', uploadedFile.documentId);
-        console.log('Metadata to send:', { title, level, subject, year: new Date().getFullYear() });
+        
+        // Convert keywords string to array - CRITICAL: must be array or null, NOT empty string
+        const keywordsArray = keywords 
+          ? keywords.split(',').map(k => k.trim()).filter(k => k.length > 0)
+          : [];
+        
+        // CRITICAL: Send null instead of empty string for PostgreSQL compatibility
+        const metadataPayload = {
+          title,
+          classLevel: level,
+          subject,
+          bacSection: bacSection || null, // Add Bac section
+          year: new Date().getFullYear(),
+          resourceType: resourceType === 'Exam' ? 'exam' : 'course',  // Map "Exam" -> "exam", "Course Material" -> "course"
+          keywords: keywordsArray.length > 0 ? keywordsArray : null,  // Array or null, NEVER empty string
+          description: description.trim() ? description.trim() : null,  // String or null, NEVER empty string
+          license,
+          price: license === 'paid' && price ? parseFloat(price) : null,
+        };
+        
+        console.log('Metadata to send:', metadataPayload);
         
         const token = authService.getToken();
         const response = await fetch(`${API_URL}/documents/${uploadedFile.documentId}/metadata`, {
@@ -324,67 +503,54 @@ export default function UploadPage() {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            title,
-            level,
-            subject,
-            year: new Date().getFullYear(),
-          }),
+          body: JSON.stringify(metadataPayload),
         });
 
         if (response.ok) {
           const result = await response.json();
           console.log('Metadata updated successfully:', result);
+          setCurrentStep(3);
         } else {
-          const error = await response.text();
-          console.error('Failed to update metadata:', error);
+          const errorText = await response.text();
+          console.error('Failed to update metadata:', response.status, errorText);
+          setErrorMessage(`Failed to save resource metadata: ${errorText}`);
         }
+      } else {
+        console.error('Invalid document ID - uploadedFile:', uploadedFile);
+        setErrorMessage(`Upload failed - invalid document ID: ${uploadedFile.documentId}. Please try uploading the file again.`);
       }
-
-      // Add to localStorage resources
-      addResource({
-        title,
-        subject,
-        level,
-        type,
-        keywords,
-        description,
-        license,
-        price,
-        fileUrl: uploadedFile.fileUrl,
-        fileName: uploadedFile.fileName,
-        fid: uploadedFile.fid,
-        fileSize: uploadedFile.size,
-      });
-      
-      setCurrentStep(3);
     } catch (error) {
       console.error('Failed to update metadata:', error);
-      // Continue anyway - at least save to localStorage
-      addResource({
-        title,
-        subject,
-        level,
-        type,
-        keywords,
-        description,
-        license,
-        price,
-        fileUrl: uploadedFile.fileUrl,
-        fileName: uploadedFile.fileName,
-        fid: uploadedFile.fid,
-        fileSize: uploadedFile.size,
-      });
-      setCurrentStep(3);
+      setErrorMessage('Failed to save resource. Please try again.');
     } finally {
       setIsPublishing(false);
     }
   };
 
   const goToNextStep = () => {
+    console.log('goToNextStep called - currentStep:', currentStep, 'uploadStatus:', uploadStatus);
+    console.log('uploadedFile state:', uploadedFile);
+    
     if (currentStep === 1 && uploadStatus === "success") {
+      // Check if uploadedFile is properly set with documentId
+      if (!uploadedFile || !uploadedFile.documentId || Object.keys(uploadedFile).length === 0) {
+        console.error('Validation failed - uploadedFile is invalid:', uploadedFile);
+        setErrorMessage('Upload data is missing. Please upload the file again.');
+        setUploadStatus("idle");
+        setCurrentStep(1);
+        return;
+      }
+      console.log('Moving to step 2 with valid uploadedFile');
       setCurrentStep(2);
     } else if (currentStep === 2 && isFormValid) {
+      // Double-check before publishing
+      if (!uploadedFile || !uploadedFile.documentId || Object.keys(uploadedFile).length === 0) {
+        console.error('Validation failed at step 2 - uploadedFile is invalid:', uploadedFile);
+        setErrorMessage('Upload data is missing. Please go back to step 1 and upload the file again.');
+        setCurrentStep(1);
+        return;
+      }
+      console.log('Publishing with uploadedFile:', uploadedFile);
       handlePublish();
     }
   };
@@ -602,9 +768,9 @@ export default function UploadPage() {
                     <Check className="w-5 h-5 text-green-600" />
                   </div>
                   <button
-                    onClick={() => window.open(uploadedFile.fileUrl, '_blank')}
+                    onClick={() => setShowPreview(true)}
                     className="p-2 rounded-lg hover:bg-[#edf0f7] transition-colors"
-                    title="Open in New Tab"
+                    title="Preview Document"
                   >
                     <Eye className="w-5 h-5 text-[#63b3ed]" />
                   </button>
@@ -652,13 +818,40 @@ export default function UploadPage() {
               </div>
             )}
 
-            {/* Success Message */}
-            {uploadStatus === "success" && (
+            {/* Success Message with AI Processing */}
+            {uploadStatus === "success" && !waitingForAI && !aiMetadataReady && (
               <div className="flex items-center gap-2 p-4 rounded-lg bg-green-50 border border-green-200">
                 <Check className="w-5 h-5 text-green-500 shrink-0" />
                 <p className="text-sm text-green-600">
                   File uploaded successfully! Click &quot;Continue&quot; to add details.
                 </p>
+              </div>
+            )}
+
+            {/* AI Processing Indicator */}
+            {waitingForAI && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 p-4 rounded-lg bg-blue-50 border border-blue-200">
+                  <Sparkles className="w-5 h-5 text-blue-600 shrink-0 animate-pulse" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-blue-900">{aiProgress}</p>
+                    <p className="text-xs text-blue-600 mt-0.5">AI is extracting metadata from your document...</p>
+                  </div>
+                </div>
+                <div className="h-2 bg-[#edf0f7] rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full animate-pulse" style={{ width: '60%' }} />
+                </div>
+              </div>
+            )}
+
+            {/* AI Ready Message */}
+            {aiMetadataReady && (
+              <div className="flex items-center gap-2 p-4 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200">
+                <Sparkles className="w-5 h-5 text-green-600 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-green-900">{aiProgress}</p>
+                  <p className="text-xs text-green-600 mt-0.5">Form has been auto-filled with AI-detected information</p>
+                </div>
               </div>
             )}
 
@@ -677,13 +870,22 @@ export default function UploadPage() {
       </div>
 
       {/* Continue Button */}
-      {uploadStatus === "success" && (
+      {uploadStatus === "success" && !waitingForAI && (
         <div className="mt-6 flex justify-end">
           <button
             onClick={goToNextStep}
             className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#63b3ed] text-white font-medium hover:bg-[#4299e1] transition-colors"
           >
-            Continue
+            {aiMetadataReady ? (
+              <>
+                <Sparkles className="w-5 h-5" />
+                Review AI-Extracted Details
+              </>
+            ) : (
+              <>
+                Continue
+              </>
+            )}
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
@@ -710,7 +912,12 @@ export default function UploadPage() {
               </p>
             </div>
             <button
-              onClick={() => uploadedFile && window.open(uploadedFile.fileUrl, '_blank')}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowPreview(true);
+              }}
+              type="button"
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#f9faff] border border-[#edf0f7] text-[#63b3ed] hover:bg-[#edf0f7] transition-colors"
             >
               <Eye className="w-4 h-4" />
@@ -723,17 +930,29 @@ export default function UploadPage() {
       <div className="bg-white rounded-2xl border border-[#edf0f7] p-8">
         <div className="text-center mb-6">
           <div className="w-16 h-16 rounded-full bg-[#e8f4fc] flex items-center justify-center mx-auto mb-4">
-            <FileText className="w-8 h-8 text-[#63b3ed]" />
+            {aiMetadataReady ? (
+              <Sparkles className="w-8 h-8 text-[#63b3ed]" />
+            ) : (
+              <FileText className="w-8 h-8 text-[#63b3ed]" />
+            )}
           </div>
           <h2
             style={{ fontFamily: "var(--font-heading), sans-serif" }}
             className="text-xl font-semibold text-[#0d1b3e] mb-2"
           >
-            Add Resource Details
+            {aiMetadataReady ? "Review AI-Extracted Details" : "Add Resource Details"}
           </h2>
           <p className="text-sm text-[#8899bb]">
-            Provide information about your educational resource
+            {aiMetadataReady 
+              ? "AI has automatically filled in the details below. Review and edit if needed." 
+              : "Provide information about your educational resource"}
           </p>
+          {aiMetadataReady && (
+            <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200">
+              <Sparkles className="w-4 h-4 text-blue-600" />
+              <span className="text-xs font-semibold text-blue-900">AI-Powered Auto-Fill</span>
+            </div>
+          )}
         </div>
 
         <div className="space-y-5">
@@ -743,14 +962,105 @@ export default function UploadPage() {
             </label>
             <input
               type="text"
-              placeholder="e.g., Cardiology QCM Pack 2026"
+              placeholder="e.g., Mathematics Chapter 3 - Fractions"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm placeholder:text-[#aab4cc] outline-none focus:border-[#63b3ed] focus:ring-2 focus:ring-[rgba(99,179,237,0.12)] transition-all bg-white text-[#0d1b3e]"
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
+              Resource Type *
+            </label>
+            <div className="grid grid-cols-2 gap-4">
+              {RESOURCE_TYPES.map((rt) => (
+                <label
+                  key={rt}
+                  className={`flex items-center justify-center gap-2 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                    resourceType === rt
+                      ? "border-[#63b3ed] bg-[rgba(99,179,237,0.05)]"
+                      : "border-[#edf0f7] hover:border-[#c0d0e8]"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="resourceType"
+                    value={rt}
+                    checked={resourceType === rt}
+                    onChange={() => setResourceType(rt)}
+                    className="sr-only"
+                  />
+                  <span className="font-medium text-[#0d1b3e]">{rt}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
+              Academic Level *
+            </label>
+            <select
+              value={level}
+              onChange={(e) => {
+                setLevel(e.target.value as EducationLevel);
+                // Reset section, subject and type when level changes
+                setBacSection("");
+                setSubject("");
+                setDocType("");
+              }}
+              className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e]"
+            >
+              <option value="">Select academic level...</option>
+              {EDUCATION_LEVELS.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-[#aab4cc] mt-1.5">
+              Select the Tunisian education level this resource is designed for
+            </p>
+          </div>
+
+          {/* Bac Section Selection - Only for 3rd Secondary and Bac */}
+          {level && requiresBacSection(level as EducationLevel) && (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
+                Bac Section / Orientation *
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                {BAC_SECTIONS.map((section) => (
+                  <label
+                    key={section.id}
+                    className={`flex flex-col p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                      bacSection === section.id
+                        ? "border-[#63b3ed] bg-[rgba(99,179,237,0.05)]"
+                        : "border-[#edf0f7] hover:border-[#c0d0e8]"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="bacSection"
+                      value={section.id}
+                      checked={bacSection === section.id}
+                      onChange={(e) => {
+                        setBacSection(e.target.value as BacSection);
+                        // Reset subject when section changes
+                        setSubject("");
+                      }}
+                      className="sr-only"
+                    />
+                    <span className="font-semibold text-[#0d1b3e] text-sm mb-1">{section.name}</span>
+                    <span className="text-xs text-[#8899bb]">{section.description}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
                 Subject *
@@ -758,49 +1068,68 @@ export default function UploadPage() {
               <select
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e]"
+                disabled={!level || (requiresBacSection(level as EducationLevel) && !bacSection)}
+                className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e] disabled:bg-[#f9faff] disabled:cursor-not-allowed"
               >
-                <option value="">Select...</option>
-                {SUBJECTS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                <option value="">Select subject...</option>
+                {availableSubjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
                   </option>
                 ))}
               </select>
+              {!level && (
+                <p className="text-xs text-amber-600 mt-1.5">
+                  Select a level first
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
-                Level *
+                Document Type *
               </label>
               <select
-                value={level}
-                onChange={(e) => setLevel(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e]"
+                value={docType}
+                onChange={(e) => setDocType(e.target.value)}
+                disabled={!level}
+                className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e] disabled:bg-[#f9faff] disabled:cursor-not-allowed"
               >
-                <option value="">Select...</option>
-                {LEVELS.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
+                <option value="">Select type...</option>
+                {availableDocTypes
+                  .filter((t) => {
+                    // Filter out exam/course-related types since they're selected in Resource Type
+                    const examRelated = ['exam', 'exam-be', 'exam-sec', 'bac-exam', 'correction', 'correction-sec'];
+                    const courseRelated = ['course', 'course-notes', 'course-sec'];
+                    
+                    // If user selected "Exam", only show exam types (correction, etc)
+                    if (resourceType === "Exam") {
+                      return examRelated.includes(t.id.toLowerCase()) || t.id.toLowerCase().includes('correction');
+                    }
+                    
+                    // If user selected "Course Material", exclude exam types
+                    if (resourceType === "Course Material") {
+                      return !examRelated.includes(t.id.toLowerCase());
+                    }
+                    
+                    return true;
+                  })
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
               </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
-                Type *
-              </label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e]"
-              >
-                <option value="">Select...</option>
-                {TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              {!level && (
+                <p className="text-xs text-amber-600 mt-1.5">
+                  Select a level first
+                </p>
+              )}
+              <p className="text-xs text-[#aab4cc] mt-1.5">
+                {resourceType === "Exam" 
+                  ? "e.g., Past Exam, Correction, Mock Exam"
+                  : "e.g., Lesson, Exercises, Summary, Notes"
+                }
+              </p>
             </div>
           </div>
 
@@ -898,17 +1227,31 @@ export default function UploadPage() {
             </div>
 
             {license === "paid" && (
-              <div className="mt-4">
+              <div className="mt-4 animate-in slide-in-from-top duration-200">
                 <label className="block text-xs font-bold uppercase tracking-wider text-[#8899bb] mb-2">
-                  Price (TND)
+                  Price (TND) *
                 </label>
                 <input
                   type="number"
                   placeholder="e.g., 15"
                   value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  className="w-40 px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] transition-all bg-white text-[#0d1b3e]"
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    // Only allow positive numbers
+                    if (value === '' || parseFloat(value) >= 0) {
+                      setPrice(value);
+                    }
+                  }}
+                  min="0.01"
+                  step="0.01"
+                  required
+                  className="w-40 px-4 py-3 rounded-xl border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] focus:ring-2 focus:ring-[rgba(99,179,237,0.12)] transition-all bg-white text-[#0d1b3e]"
                 />
+                {(!price || parseFloat(price) <= 0) && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    Price is required for paid resources
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -916,7 +1259,7 @@ export default function UploadPage() {
       </div>
 
       {/* Navigation Buttons */}
-      <div className="mt-6 flex justify-between">
+      <div className="max-w-2xl mx-auto mt-6 flex justify-between">
         <button
           onClick={goToPreviousStep}
           className="flex items-center gap-2 px-6 py-3 rounded-xl border border-[#edf0f7] text-[#4a5568] font-medium hover:bg-[#f9faff] transition-colors"
@@ -969,7 +1312,8 @@ export default function UploadPage() {
         {/* Preview Button */}
         {uploadedFile && (
           <button
-            onClick={() => window.open(uploadedFile.fileUrl, '_blank')}
+            onClick={() => setShowPreview(true)}
+            type="button"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#f9faff] border border-[#edf0f7] text-[#63b3ed] font-medium hover:bg-[#edf0f7] transition-colors mb-8"
           >
             <Eye className="w-5 h-5" />
@@ -997,7 +1341,7 @@ export default function UploadPage() {
               setTitle("");
               setSubject("");
               setLevel("");
-              setType("");
+              setDocType("");
               setKeywords("");
               setDescription("");
               setLicense("free");
@@ -1015,9 +1359,9 @@ export default function UploadPage() {
   );
 
   return (
-    <div className="pb-12">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="mb-6">
+      <div>
         <div className="flex items-center justify-between">
           <div>
             <h1
@@ -1153,7 +1497,7 @@ export default function UploadPage() {
 
       {/* Upload View */}
       {viewMode === "upload" && (
-        <>
+        <div>
           {/* Steps Progress */}
           <div className="flex items-center justify-center gap-2 mb-10">
         <button
@@ -1206,9 +1550,16 @@ export default function UploadPage() {
       {currentStep === 1 && renderUploadStep()}
       {currentStep === 2 && renderDetailsStep()}
       {currentStep === 3 && renderSuccessStep()}
+        </div>
+      )}
 
-      {/* Document Preview Modal - Removed, using browser native viewer */}
-        </>
+      {/* Document Preview Modal */}
+      {showPreview && uploadedFile && selectedFile && (
+        <DocumentPreview
+          fileUrl={uploadedFile.fileUrl}
+          fileName={selectedFile.name}
+          onClose={() => setShowPreview(false)}
+        />
       )}
 
       {/* OCR Result Modal */}

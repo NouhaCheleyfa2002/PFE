@@ -1,4 +1,4 @@
-import { Star, CheckCircle2, Bell, Search, Sparkles } from "lucide-react";
+import { Star, CheckCircle2, Bell, Search, Sparkles, MessageSquare } from "lucide-react";
 
 export const ICONS = {
   star: Star,
@@ -6,4 +6,5 @@ export const ICONS = {
   bell: Bell,
   search: Search,
   sparkles: Sparkles,
+  message: MessageSquare,
 };

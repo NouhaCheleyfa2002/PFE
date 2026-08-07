@@ -9,6 +9,7 @@ import {
   Copy,
   Pencil,
   AlertCircle,
+  Eye,
 } from "lucide-react";
 import {
   DndContext,
@@ -267,12 +268,29 @@ function QuestionEditorForm({
   q,
   onSave,
   onCancel,
+  exam,
+  totalPoints,
 }: {
   q: Question;
   onSave: (updates: Partial<Question>) => void;
   onCancel: () => void;
+  exam: any;
+  totalPoints: number;
 }) {
   const [draft, setDraft] = useState<Question>({ ...q });
+
+  const handleSave = () => {
+    // Check if updating points would exceed max
+    if (exam.maxPoints) {
+      const pointsDiff = draft.points - q.points;
+      const newTotal = totalPoints + pointsDiff;
+      if (newTotal > exam.maxPoints) {
+        alert(`Cannot update question! This would exceed the maximum points limit by ${newTotal - exam.maxPoints} pts.`);
+        return;
+      }
+    }
+    onSave(draft);
+  };
 
   return (
     <div
@@ -543,7 +561,7 @@ function QuestionEditorForm({
           Cancel
         </button>
         <button
-          onClick={() => onSave(draft)}
+          onClick={handleSave}
           style={{
             fontSize: 12,
             color: "#fff",
@@ -574,9 +592,9 @@ function QuestionBody({ q, isEditorMode = false, onUpdate }: QuestionBodyProps) 
   if (q.type === "mcq" && q.options) {
     return (
       <div style={{ paddingLeft: 20 }}>
-        {q.options.map((o) => (
+        {q.options.map((o, idx) => (
           <div
-            key={o.label}
+            key={`${q.id}-option-${idx}`}
             style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 5 }}
           >
             <span
@@ -771,6 +789,8 @@ function SortableQuestionBlock({
   onRemove,
   onDuplicate,
   onUpdate,
+  exam,
+  totalPoints,
 }: {
   q: Question;
   index: number;
@@ -780,6 +800,8 @@ function SortableQuestionBlock({
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => void;
   onUpdate: (id: string, updates: Partial<Question>) => void;
+  exam: any;
+  totalPoints: number;
 }) {
   const [isEditing, setIsEditing] = useState(false);
 
@@ -872,6 +894,8 @@ function SortableQuestionBlock({
           q={q}
           onSave={handleSave}
           onCancel={() => setIsEditing(false)}
+          exam={exam}
+          totalPoints={totalPoints}
         />
       ) : (
         <>
@@ -895,6 +919,43 @@ function SortableQuestionBlock({
               ({q.points} pt{q.points !== 1 ? "s" : ""})
             </span>
           </p>
+
+          {/* Show image if present (for any question type) */}
+          {q.imageUrl && q.type !== "image" && (
+            <div style={{ marginBottom: 12 }}>
+              {onUpdate && isEditorMode ? (
+                <ResizableImage q={q} isEditorMode={isEditorMode} onUpdate={onUpdate} />
+              ) : (
+                <div style={{ paddingLeft: 20 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={q.imageUrl}
+                    alt={q.imageCaption || "Question image"}
+                    crossOrigin="anonymous"
+                    style={{
+                      display: "block",
+                      width: q.imageWidth ?? 340,
+                      maxWidth: "100%",
+                      height: "auto",
+                      borderRadius: 4,
+                      border: "1px solid #e5e7eb",
+                      marginBottom: 8,
+                      ...(q.imageAlign === "center"
+                        ? { marginLeft: "auto", marginRight: "auto" }
+                        : q.imageAlign === "right"
+                        ? { marginLeft: "auto" }
+                        : {}),
+                    }}
+                  />
+                  {q.imageCaption && (
+                    <p style={{ fontSize: 11, textAlign: q.imageAlign || "left", color: "#6b7280", fontStyle: "italic", margin: "2px 0 6px", paddingLeft: 20 }}>
+                      {q.imageCaption}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Type-specific body */}
           <QuestionBody q={q} isEditorMode={isEditorMode} onUpdate={onUpdate} />
@@ -920,22 +981,78 @@ const PAGE_STYLE: React.CSSProperties = {
 
 /* ─── Main ExamPreview component ───────────────────────────────────────────── */
 
-const ExamPreview = forwardRef<HTMLDivElement>(function ExamPreview(_, ref) {
+interface ExamPreviewProps {
+  importedTemplate?: any;
+}
+
+const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPreview({ importedTemplate }, ref) {
   const {
     exam,
     setTitle,
+    setClassLevel,
+    setSubject,
     setDuration,
     setInstructions,
+    setTemplateId,
     removeQuestion,
     reorderQuestions,
     duplicateQuestion,
     updateQuestion,
     previewMode,
     validationErrors,
+    totalPoints,
   } = useExam();
 
   const isEditorMode = previewMode === "edit";
   const isMobile = previewMode === "mobile";
+  
+  // Fetch selected template OR use imported template
+  const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+
+  useEffect(() => {
+    async function loadTemplate() {
+      // Use imported template if available and no templateId
+      if (importedTemplate && !exam.templateId) {
+        console.log('[ExamPreview] Using imported template:', {
+          name: importedTemplate.name,
+          hasLogoUrl: !!importedTemplate.logoUrl,
+          logoUrlLength: importedTemplate.logoUrl?.length,
+          logoPosition: importedTemplate.logoPosition,
+          logoWidth: importedTemplate.logoPosition?.width,
+          shouldShowImage: !!(importedTemplate.logoUrl && importedTemplate.logoPosition?.width > 200)
+        });
+        setSelectedTemplate(importedTemplate);
+        return;
+      }
+      
+      if (exam.templateId) {
+        setLoadingTemplate(true);
+        try {
+          const { getTemplateById } = await import("@/lib/api/templates");
+          const template = await getTemplateById(exam.templateId);
+          console.log('[ExamPreview] Template loaded:', {
+            id: template.id,
+            name: template.name,
+            hasLogoUrl: !!template.logoUrl,
+            logoUrlLength: template.logoUrl?.length,
+            logoPosition: template.logoPosition,
+            logoWidth: template.logoPosition?.width,
+            shouldShowImage: !!(template.logoUrl && template.logoPosition?.width > 200)
+          });
+          setSelectedTemplate(template);
+        } catch (error) {
+          console.error("Failed to load template:", error);
+          setSelectedTemplate(null);
+        } finally {
+          setLoadingTemplate(false);
+        }
+      } else {
+        setSelectedTemplate(null);
+      }
+    }
+    loadTemplate();
+  }, [exam.templateId, importedTemplate]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -982,50 +1099,282 @@ const ExamPreview = forwardRef<HTMLDivElement>(function ExamPreview(_, ref) {
         }}
       >
         <div style={mobilePageStyle}>
-          {/* ── Header ── */}
-          <div
-            style={{
-              textAlign: "center",
-              marginBottom: 20,
-              borderBottom: "2px solid #000",
-              paddingBottom: 14,
-            }}
-          >
-            {isEditorMode ? (
-              <input
-                value={exam.title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Exam Title"
-                style={{
-                  textAlign: "center",
-                  fontSize: 20,
-                  fontWeight: 700,
-                  width: "100%",
-                  backgroundColor: "transparent",
-                  outline: "none",
-                  border: "none",
-                  color: "#000",
-                }}
-              />
-            ) : (
-              <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{exam.title}</h1>
-            )}
-
+          {/* ── Header - Template Section ── */}
+          {selectedTemplate && (
+            // Render template header with layout settings
             <div
-              style={{ display: "flex", justifyContent: "space-between", marginTop: 14, fontSize: 13 }}
+              style={{
+                marginBottom: 20,
+                paddingBottom: 14,
+                fontFamily: selectedTemplate.fontFamily || "'Times New Roman', serif",
+                lineHeight: (selectedTemplate.layoutSettings?.lineHeight || 14) / 10,
+                position: "relative",
+              }}
+            >
+              {/* Display imported image if logoUrl exists and is large */}
+              {selectedTemplate.logoUrl && selectedTemplate.logoPosition?.width > 200 && (
+                <div style={{ textAlign: "center", marginBottom: 16 }}>
+                  <img
+                    src={selectedTemplate.logoUrl}
+                    alt="Template Header"
+                    {...(selectedTemplate.logoUrl.startsWith('http') ? { crossOrigin: 'anonymous' as const } : {})}
+                    onLoad={() => console.log('[ExamPreview] Template image loaded successfully')}
+                    onError={(e) => console.error('[ExamPreview] Template image failed to load:', e)}
+                    style={{
+                      maxWidth: "100%",
+                      height: "auto",
+                      borderRadius: 4,
+                    }}
+                  />
+                </div>
+              )}
+              
+              {selectedTemplate.layoutSettings?.showInstitutionName !== false && selectedTemplate.institutionName && (
+                isEditorMode ? (
+                  <input
+                    data-html2canvas-ignore="true"
+                    value={selectedTemplate.institutionName}
+                    onChange={(e) => {
+                      setSelectedTemplate({
+                        ...selectedTemplate,
+                        institutionName: e.target.value
+                      });
+                    }}
+                    placeholder="Institution Name"
+                    style={{ 
+                      fontSize: selectedTemplate.layoutSettings?.institutionNameSize || 18, 
+                      fontWeight: 700, 
+                      margin: `0 0 ${selectedTemplate.layoutSettings?.headerSpacing || 8}px 0`,
+                      color: selectedTemplate.primaryColor || "#000",
+                      textAlign: selectedTemplate.layoutSettings?.institutionNameAlign || "center",
+                      width: "100%",
+                      backgroundColor: "transparent",
+                      outline: "none",
+                      border: "none",
+                      borderBottom: "1px dashed #cbd5e1",
+                    }}
+                  />
+                ) : (
+                  <h1 
+                    style={{ 
+                      fontSize: selectedTemplate.layoutSettings?.institutionNameSize || 18, 
+                      fontWeight: 700, 
+                      margin: `0 0 ${selectedTemplate.layoutSettings?.headerSpacing || 8}px 0`,
+                      color: selectedTemplate.primaryColor || "#000",
+                      textAlign: selectedTemplate.layoutSettings?.institutionNameAlign || "center"
+                    }}
+                  >
+                    {selectedTemplate.institutionName}
+                  </h1>
+                )
+              )}
+              {selectedTemplate.layoutSettings?.showAddress !== false && selectedTemplate.institutionAddress && (
+                isEditorMode ? (
+                  <input
+                    data-html2canvas-ignore="true"
+                    value={selectedTemplate.institutionAddress}
+                    onChange={(e) => {
+                      setSelectedTemplate({
+                        ...selectedTemplate,
+                        institutionAddress: e.target.value
+                      });
+                    }}
+                    placeholder="Address"
+                    style={{ 
+                      fontSize: selectedTemplate.layoutSettings?.addressSize || 12, 
+                      margin: `0 0 ${selectedTemplate.layoutSettings?.headerSpacing || 6}px 0`,
+                      color: selectedTemplate.secondaryColor || "#666",
+                      textAlign: selectedTemplate.layoutSettings?.addressAlign || "center",
+                      width: "100%",
+                      backgroundColor: "transparent",
+                      outline: "none",
+                      border: "none",
+                      borderBottom: "1px dashed #cbd5e1",
+                    }}
+                  />
+                ) : (
+                  <p style={{ 
+                    fontSize: selectedTemplate.layoutSettings?.addressSize || 12, 
+                    margin: `0 0 ${selectedTemplate.layoutSettings?.headerSpacing || 6}px 0`,
+                    color: selectedTemplate.secondaryColor || "#666",
+                    textAlign: selectedTemplate.layoutSettings?.addressAlign || "center"
+                  }}>
+                    {selectedTemplate.institutionAddress}
+                  </p>
+                )
+              )}
+              {selectedTemplate.layoutSettings?.showContact !== false && (selectedTemplate.contactPhone || selectedTemplate.contactEmail) && (
+                isEditorMode ? (
+                  <div style={{ 
+                    margin: `0 0 ${selectedTemplate.layoutSettings?.headerSpacing || 6}px 0`,
+                    textAlign: selectedTemplate.layoutSettings?.contactAlign || "center",
+                    display: "flex",
+                    gap: 8,
+                    justifyContent: selectedTemplate.layoutSettings?.contactAlign === "left" ? "flex-start" : selectedTemplate.layoutSettings?.contactAlign === "right" ? "flex-end" : "center",
+                  }}>
+                    <input
+                      data-html2canvas-ignore="true"
+                      value={selectedTemplate.contactPhone || ""}
+                      onChange={(e) => {
+                        setSelectedTemplate({
+                          ...selectedTemplate,
+                          contactPhone: e.target.value
+                        });
+                      }}
+                      placeholder="Phone"
+                      style={{ 
+                        fontSize: selectedTemplate.layoutSettings?.contactSize || 10, 
+                        color: "#888",
+                        backgroundColor: "transparent",
+                        outline: "none",
+                        border: "none",
+                        borderBottom: "1px dashed #cbd5e1",
+                        width: 140,
+                        textAlign: "center",
+                      }}
+                    />
+                    <span style={{ color: "#888", fontSize: selectedTemplate.layoutSettings?.contactSize || 10 }}>|</span>
+                    <input
+                      data-html2canvas-ignore="true"
+                      value={selectedTemplate.contactEmail || ""}
+                      onChange={(e) => {
+                        setSelectedTemplate({
+                          ...selectedTemplate,
+                          contactEmail: e.target.value
+                        });
+                      }}
+                      placeholder="Email"
+                      style={{ 
+                        fontSize: selectedTemplate.layoutSettings?.contactSize || 10, 
+                        color: "#888",
+                        backgroundColor: "transparent",
+                        outline: "none",
+                        border: "none",
+                        borderBottom: "1px dashed #cbd5e1",
+                        width: 180,
+                        textAlign: "center",
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <p style={{ 
+                    fontSize: selectedTemplate.layoutSettings?.contactSize || 10, 
+                    margin: `0 0 ${selectedTemplate.layoutSettings?.headerSpacing || 6}px 0`, 
+                    color: "#888",
+                    textAlign: selectedTemplate.layoutSettings?.contactAlign || "center"
+                  }}>
+                    {[selectedTemplate.contactPhone, selectedTemplate.contactEmail].filter(Boolean).join(" | ")}
+                  </p>
+                )
+              )}
+              {selectedTemplate.layoutSettings?.showAcademicYear !== false && selectedTemplate.academicYear && (
+                isEditorMode ? (
+                  <input
+                    data-html2canvas-ignore="true"
+                    value={selectedTemplate.academicYear}
+                    onChange={(e) => {
+                      setSelectedTemplate({
+                        ...selectedTemplate,
+                        academicYear: e.target.value
+                      });
+                    }}
+                    placeholder="Academic Year"
+                    style={{ 
+                      fontSize: selectedTemplate.layoutSettings?.academicYearSize || 11, 
+                      margin: "0 0 10px 0",
+                      fontWeight: 600,
+                      color: selectedTemplate.secondaryColor || "#666",
+                      textAlign: selectedTemplate.layoutSettings?.academicYearAlign || "center",
+                      width: "100%",
+                      backgroundColor: "transparent",
+                      outline: "none",
+                      border: "none",
+                      borderBottom: "1px dashed #cbd5e1",
+                    }}
+                  />
+                ) : (
+                  <p style={{ 
+                    fontSize: selectedTemplate.layoutSettings?.academicYearSize || 11, 
+                    margin: "0 0 10px 0",
+                    fontWeight: 600,
+                    color: selectedTemplate.secondaryColor || "#666",
+                    textAlign: selectedTemplate.layoutSettings?.academicYearAlign || "center"
+                  }}>
+                    Academic Year: {selectedTemplate.academicYear}
+                  </p>
+                )
+              )}
+            </div>
+          )}
+
+          {/* Exam Title and Student Info Section - Toggleable */}
+          <div style={{ position: "relative", marginTop: selectedTemplate ? 0 : 20 }}>
+            {/* Hide/Show Button (Edit Mode Only) */}
+            {isEditorMode && (
+              <button
+                data-html2canvas-ignore="true"
+                onClick={() => {
+                  const section = document.getElementById('exam-info-section');
+                  if (section) {
+                    section.style.display = section.style.display === 'none' ? 'block' : 'none';
+                  }
+                }}
+                className="absolute -top-8 right-0 text-xs text-[#8899bb] hover:text-[#0d1b3e] transition-colors z-10"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  backgroundColor: "#f9faff",
+                  border: "1px solid #edf0f7",
+                  borderRadius: 6,
+                }}
+                title="Toggle exam title and student info"
+              >
+                <Eye style={{ width: 12, height: 14 }} />
+                Toggle Info
+              </button>
+            )}
+            <div id="exam-info-section">
+              {/* Exam Title */}
+              <div style={{ borderTop: selectedTemplate ? "1px solid #ddd" : "2px solid #000", paddingTop: 10, marginTop: selectedTemplate ? 10 : 0, paddingBottom: 14, marginBottom: 20 }}>
+                {isEditorMode ? (
+                  <input
+                    value={exam.title || ""}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Exam Title"
+                    style={{
+                      textAlign: "center",
+                      fontSize: selectedTemplate ? 16 : 20,
+                      fontWeight: selectedTemplate ? 600 : 700,
+                      width: "100%",
+                      backgroundColor: "transparent",
+                      outline: "none",
+                      border: "none",
+                      color: "#000",
+                    }}
+                  />
+                ) : (
+                  <h2 style={{ fontSize: selectedTemplate ? 16 : 20, fontWeight: selectedTemplate ? 600 : 700, margin: 0, textAlign: "center" }}>{exam.title}</h2>
+                )}
+              </div>
+              
+              <div style={{ marginTop: 14 }}>
+            <div
+              style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}
             >
               <span>Name: ____________________________</span>
               <span>Date: _______________</span>
             </div>
 
             <div
-              style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13 }}
+              style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <span>Duration:</span>
                 {isEditorMode ? (
                   <input
-                    value={exam.duration}
+                    value={exam.duration || ""}
                     onChange={(e) => setDuration(e.target.value)}
                     placeholder="60 min"
                     style={{
@@ -1042,14 +1391,63 @@ const ExamPreview = forwardRef<HTMLDivElement>(function ExamPreview(_, ref) {
                 )}
               </div>
               <span>
-                Total: {exam.questions.reduce((s, q) => s + q.points, 0)} points
+                Total: {(() => {
+                  const total = exam.questions.reduce((s, q) => s + (q.points || 0), 0);
+                  return Number.isInteger(total) ? total : total.toFixed(1);
+                })()} points
               </span>
+            </div>
+
+            {/* Class Level and Subject */}
+            <div
+              style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13 }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span>Level:</span>
+                {isEditorMode ? (
+                  <input
+                    value={exam.classLevel || ""}
+                    onChange={(e) => setClassLevel(e.target.value as any)}
+                    placeholder="e.g., 3rd Secondary"
+                    style={{
+                      width: 140,
+                      backgroundColor: "transparent",
+                      outline: "none",
+                      borderBottom: "1px dashed #9ca3af",
+                      textAlign: "center",
+                      fontSize: 13,
+                    }}
+                  />
+                ) : (
+                  <span style={{ marginLeft: 4 }}>{exam.classLevel || "—"}</span>
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span>Subject:</span>
+                {isEditorMode ? (
+                  <input
+                    value={exam.subject || ""}
+                    onChange={(e) => setSubject(e.target.value)}
+                    placeholder="e.g., Mathematics"
+                    style={{
+                      width: 120,
+                      backgroundColor: "transparent",
+                      outline: "none",
+                      borderBottom: "1px dashed #9ca3af",
+                      textAlign: "center",
+                      fontSize: 13,
+                    }}
+                  />
+                ) : (
+                  <span style={{ marginLeft: 4 }}>{exam.subject || "—"}</span>
+                )}
+              </div>
             </div>
 
             <div style={{ marginTop: 10, textAlign: "left" }}>
               {isEditorMode ? (
                 <textarea
-                  value={exam.instructions}
+                  value={exam.instructions || ""}
                   onChange={(e) => setInstructions(e.target.value)}
                   placeholder="Instructions: Read all questions carefully before answering…"
                   rows={2}
@@ -1071,6 +1469,8 @@ const ExamPreview = forwardRef<HTMLDivElement>(function ExamPreview(_, ref) {
                   </p>
                 )
               )}
+            </div>
+            </div>
             </div>
           </div>
 
@@ -1114,6 +1514,8 @@ const ExamPreview = forwardRef<HTMLDivElement>(function ExamPreview(_, ref) {
                     onRemove={removeQuestion}
                     onDuplicate={duplicateQuestion}
                     onUpdate={updateQuestion}
+                    exam={exam}
+                    totalPoints={totalPoints}
                   />
                 ))}
               </SortableContext>

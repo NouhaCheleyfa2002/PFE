@@ -18,6 +18,8 @@ import {
   ClipboardList,
   Users,
   LogOut,
+  FileText,
+  MessageSquare,
 } from "lucide-react";
 import { authService, User } from "@/lib/auth";
 
@@ -34,7 +36,7 @@ const TEACHER_NAV = [
   {
     section: "Create",
     items: [
-      { label: "Upload Course", href: "/dashboard/upload",       icon: Upload },
+      { label: "Upload Resource", href: "/dashboard/upload",       icon: Upload },
       { label: "Exam Builder",  href: "/dashboard/exam-builder", icon: FileEdit },
       { label: "AI Generator",  href: "/dashboard/ai-generator", icon: Sparkles },
     ],
@@ -44,7 +46,7 @@ const TEACHER_NAV = [
     items: [
       { label: "Question Bank", href: "/dashboard/questions", icon: ListChecks },
       { label: "Analytics",     href: "/dashboard/analytics", icon: BarChart2 },
-      { label: "Settings",      href: "/dashboard/settings",  icon: SettingsIcon },
+      { label: "Profile",       href: "/dashboard/profile",   icon: SettingsIcon },
     ],
   },
 ];
@@ -53,20 +55,24 @@ const ADMIN_NAV = [
   {
     section: "Overview",
     items: [
-      { label: "Dashboard",    href: "/dashboard",              icon: LayoutDashboard },
+      { label: "Overview",     href: "/dashboard/admin/overview",   icon: LayoutDashboard },
     ],
   },
   {
     section: "Administration",
     items: [
-      { label: "Users",        href: "/dashboard/admin/users",  icon: Users },
-      { label: "All Courses",  href: "/dashboard/library",      icon: BookOpen },
-      { label: "Worker Tasks", href: "/dashboard/admin",        icon: ClipboardList },
+      { label: "Users",        href: "/dashboard/admin/users",        icon: Users },
+      { label: "Verification", href: "/dashboard/admin/verification", icon: ShieldCheck },
+      { label: "Documents",    href: "/dashboard/admin/moderation",   icon: FileText },
+      { label: "Ratings",      href: "/dashboard/admin/ratings-moderation", icon: MessageSquare },
+      { label: "All Courses",  href: "/dashboard/library",            icon: BookOpen },
+      { label: "Worker Tasks", href: "/dashboard/admin",              icon: ClipboardList },
     ],
   },
   {
     section: "System",
     items: [
+      { label: "Analytics",    href: "/dashboard/analytics",     icon: BarChart2 },
       { label: "Settings",     href: "/dashboard/settings",     icon: SettingsIcon },
     ],
   },
@@ -153,21 +159,8 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* user card + logout */}
-      <div style={{ padding: open ? "0 16px 24px" : "0 10px 24px", transition: "padding 0.3s" }} className="space-y-2">
-        <div className="flex items-center gap-2.5 p-3 rounded-[10px] bg-white/4 border border-white/6 cursor-pointer hover:bg-white/[0.07] transition-colors whitespace-nowrap">
-          <div className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-xs font-bold text-white shrink-0 ${isAdmin ? "bg-linear-to-br from-[#f6ad55] to-[#ed8936]" : "bg-linear-to-br from-[#63b3ed] to-[#a78bfa]"}`}>
-            {user?.fullName?.slice(0, 2).toUpperCase() || "??"}
-          </div>
-          <div style={{ opacity: open ? 1 : 0, transition: "opacity 0.15s" }} className="overflow-hidden">
-            <p className="text-[13px] font-semibold text-[#d0dff7] truncate">{user?.fullName || "Loading..."}</p>
-            <div className={`flex items-center gap-1 text-[11px] mt-0.5 ${isAdmin ? "text-[#f6ad55]" : "text-[#3d8b3d]"}`}>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAdmin ? "bg-[#f6ad55]" : "bg-[#48bb78]"}`} />
-              {isAdmin ? "Administrator" : "Verified Educator"}
-            </div>
-          </div>
-        </div>
-
+      {/* logout */}
+      <div style={{ padding: open ? "0 16px 24px" : "0 10px 24px", transition: "padding 0.3s" }}>
         <button
           onClick={() => { authService.logout(); router.push("/auth"); }}
           style={{ paddingLeft: open ? 12 : 18, paddingRight: open ? 12 : 18, transition: "padding 0.3s" }}

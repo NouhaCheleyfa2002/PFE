@@ -132,7 +132,6 @@ export class QuestionsService {
       category: 'Cardiology',
       difficulty: 8,
       points: 4,
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/SinusRhythmLabels.svg/600px-SinusRhythmLabels.svg.png',
       lines: 4,
     },
 
@@ -218,5 +217,47 @@ export class QuestionsService {
 
   getCategories(): string[] {
     return [...new Set(this.questions.map((q) => q.category))];
+  }
+
+  create(data: Partial<Question>): Question {
+    const newQuestion: Question = {
+      id: `q${Date.now()}`,
+      type: data.type || 'mcq',
+      text: data.text || '',
+      category: data.category || '',
+      difficulty: data.difficulty || 5,
+      points: data.points || 2,
+      level: data.level,
+      imageUrl: data.imageUrl,
+      imageCaption: data.imageCaption,
+      options: data.options,
+      correctAnswer: data.correctAnswer,
+      blanks: data.blanks,
+      matchPairs: data.matchPairs,
+      lines: data.lines,
+      imageWidth: data.imageWidth,
+      imageAlign: data.imageAlign,
+    };
+    this.questions.push(newQuestion);
+    return newQuestion;
+  }
+
+  update(id: string, data: Partial<Question>, userId: string): Question | null {
+    const index = this.questions.findIndex((q) => q.id === id);
+    if (index === -1) return null;
+
+    this.questions[index] = {
+      ...this.questions[index],
+      ...data,
+    };
+    return this.questions[index];
+  }
+
+  remove(id: string, userId: string): boolean {
+    const index = this.questions.findIndex((q) => q.id === id);
+    if (index === -1) return false;
+
+    this.questions.splice(index, 1);
+    return true;
   }
 }

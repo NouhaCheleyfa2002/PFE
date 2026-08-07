@@ -9,7 +9,7 @@ export const getTypeOrmConfig = (configService: ConfigService): TypeOrmModuleOpt
   password: configService.get<string>('DATABASE_PASSWORD', 'edushare_password'),
   database: configService.get<string>('DATABASE_NAME', 'edushare'),
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-  synchronize: true, // Auto-create tables (disable in production, use migrations)
-  logging: configService.get<string>('NODE_ENV') === 'development',
+  synchronize: false, // Disabled - using migrations instead
+  logging: false,
   autoLoadEntities: true,
 });

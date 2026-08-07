@@ -8,9 +8,13 @@ import {
   UploadedFile,
   HttpException,
   HttpStatus,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
+import type { Response } from 'express';
+import axios from 'axios';
 import type { Multer } from 'multer';
 
 type MulterFile = Express.Multer.File;
@@ -62,5 +66,56 @@ export class UploadController {
   @Delete(':fid')
   async deleteFile(@Param('fid') fid: string) {
     return this.uploadService.deleteFile(fid);
+  }
+
+  @Get('proxy/:year/:month/:day/:filename')
+  async proxyFile(
+    @Param('year') year: string,
+    @Param('month') month: string,
+    @Param('day') day: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const filerUrl = process.env.SEAWEED_FILER_URL || 'http://localhost:8888';
+      const fullPath = `/uploads/${year}/${month}/${day}/${filename}`;
+      
+      console.log('Proxying file:', fullPath);
+      console.log('From:', `${filerUrl}${fullPath}`);
+      
+      // Fetch from SeaweedFS
+      const response = await axios.get(`${filerUrl}${fullPath}`, {
+        responseType: 'arraybuffer',
+      });
+
+      // Determine content type from file extension
+      const ext = filename.split('.').pop()?.toLowerCase();
+      let contentType = response.headers['content-type'] || 'application/octet-stream';
+      
+      // Override content type for known extensions
+      if (ext === 'pdf') contentType = 'application/pdf';
+      if (ext === 'docx') contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      if (ext === 'pptx') contentType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+      
+      // Set headers for inline viewing
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('Content-Length', response.data.length.toString());
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
+      
+      console.log('Successfully proxied file, size:', response.data.length);
+      console.log('Content-Type:', contentType);
+      console.log('Content-Disposition: inline');
+      
+      return res.send(Buffer.from(response.data));
+    } catch (error) {
+      console.error('Proxy error:', error.message);
+      console.error('Full error:', error);
+      throw new HttpException(
+        `Failed to fetch file: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }

@@ -34,7 +34,9 @@ export class UploadService {
       // Create a path based on current date for organization
       const now = new Date();
       const datePath = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
-      const filePath = `/uploads/${datePath}/${Date.now()}_${file.originalname}`;
+      const timestamp = Date.now();
+      const fileName = `${timestamp}_${file.originalname}`;
+      const filePath = `/uploads/${datePath}/${fileName}`;
 
       const uploadResponse = await axios.post(
         `${this.filerUrl}${filePath}`,
@@ -44,8 +46,9 @@ export class UploadService {
         },
       );
 
-      // Filer returns the file info
-      const fileUrl = `${this.filerUrl}${filePath}`;
+      // Return URL through our proxy endpoint for proper headers
+      const backendUrl = process.env.BACKEND_URL || 'http://localhost:3000';
+      const fileUrl = `${backendUrl}/upload/proxy/${datePath}/${fileName}`;
 
       return {
         fid: filePath, // Use the path as the file ID

@@ -216,4 +216,163 @@ export class AiService {
       apiUrl: this.apiUrl,
     };
   }
+
+  /**
+   * Generate exam questions from course material
+   */
+  async generateQuestions(
+    documentText: string,
+    count: number,
+    difficulty: string,
+    topics?: string[],
+    customInstructions?: string,
+  ): Promise<Array<{
+    text: string;
+    options: string[] | null;
+    correctAnswer: string | null;
+    topic: string | null;
+    difficulty: string;
+    explanation: string | null;
+  }>> {
+    this.validateApiKey();
+
+    if (!documentText || documentText.trim() === '') {
+      throw new HttpException('Document text cannot be empty', HttpStatus.BAD_REQUEST);
+    }
+
+    this.logger.log(`Generating ${count} ${difficulty} questions from document (${documentText.length} chars)`);
+
+    const systemPrompt = this.buildQuestionGenerationSystemPrompt();
+    const userPrompt = this.buildQuestionGenerationUserPrompt(
+      documentText,
+      count,
+      difficulty,
+      topics,
+      customInstructions,
+    );
+
+    try {
+      const aiResponse = await this.chat(userPrompt, systemPrompt);
+      const questions = this.parseGeneratedQuestions(aiResponse);
+
+      this.logger.log(`Successfully generated ${questions.length} questions`);
+      return questions;
+    } catch (error) {
+      this.logger.error('Failed to generate questions:', error);
+      throw new HttpException(
+        'Failed to generate questions with AI',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  private buildQuestionGenerationSystemPrompt(): string {
+    return `You are an expert educational content creator specialized in generating high-quality exam questions.
+
+Your task is to create exam questions based on provided course material.
+
+Question Types to Generate:
+1. Multiple Choice Questions (MCQ) - 4 options (A, B, C, D)
+2. True/False Questions - 2 options
+3. Short Answer Questions - No options, just question text
+4. Fill-in-the-Blank Questions - Use _____ for blanks
+
+Rules:
+1. Questions must be clear, unambiguous, and educational
+2. For MCQ: Provide exactly 4 options, mark correct answer
+3. For True/False: Provide 2 options (True/False)
+4. Ensure questions test understanding, not just memorization
+5. Include explanations for correct answers
+6. Vary question types for diversity
+7. Questions should be appropriate for the specified difficulty level
+8. Return ONLY valid JSON, no markdown code blocks
+
+Output format:
+{
+  "questions": [
+    {
+      "text": "Question text here?",
+      "options": ["A) option1", "B) option2", "C) option3", "D) option4"] or null,
+      "correctAnswer": "A" or "option1" or null,
+      "topic": "Topic/Subject",
+      "difficulty": "easy|medium|hard",
+      "explanation": "Why this is correct..."
+    }
+  ]
+}`;
+  }
+
+  private buildQuestionGenerationUserPrompt(
+    documentText: string,
+    count: number,
+    difficulty: string,
+    topics?: string[],
+    customInstructions?: string,
+  ): string {
+    let prompt = `Generate ${count} ${difficulty} exam questions from the following course material:\n\n`;
+    
+    if (topics && topics.length > 0) {
+      prompt += `Focus on these topics: ${topics.join(', ')}\n\n`;
+    }
+
+    if (customInstructions) {
+      prompt += `Additional instructions: ${customInstructions}\n\n`;
+    }
+
+    // Limit document text to avoid token limits (use first 8000 chars)
+    const truncatedText = documentText.length > 8000 
+      ? documentText.substring(0, 8000) + '\n\n[Text truncated...]'
+      : documentText;
+
+    prompt += `Course Material:\n${truncatedText}\n\n`;
+    prompt += `Generate a diverse mix of question types (MCQ, True/False, Short Answer, Fill-in-the-Blank).\n`;
+    prompt += `Return ONLY the JSON object with the questions array.`;
+
+    return prompt;
+  }
+
+  private parseGeneratedQuestions(aiResponse: string): Array<{
+    text: string;
+    options: string[] | null;
+    correctAnswer: string | null;
+    topic: string | null;
+    difficulty: string;
+    explanation: string | null;
+  }> {
+    try {
+      let cleanedResponse = aiResponse.trim();
+
+      // Remove markdown code blocks
+      if (cleanedResponse.startsWith('```json')) {
+        cleanedResponse = cleanedResponse.replace(/```json\n?/g, '');
+      }
+      if (cleanedResponse.startsWith('```')) {
+        cleanedResponse = cleanedResponse.replace(/```\n?/g, '');
+      }
+      if (cleanedResponse.endsWith('```')) {
+        cleanedResponse = cleanedResponse.replace(/\n?```$/g, '');
+      }
+
+      const parsed = JSON.parse(cleanedResponse);
+
+      if (!parsed.questions || !Array.isArray(parsed.questions)) {
+        throw new Error('Invalid response format: missing questions array');
+      }
+
+      return parsed.questions.map((q: any) => ({
+        text: q.text || '',
+        options: Array.isArray(q.options) ? q.options : null,
+        correctAnswer: q.correctAnswer || null,
+        topic: q.topic || null,
+        difficulty: q.difficulty || 'medium',
+        explanation: q.explanation || null,
+      }));
+    } catch (error) {
+      this.logger.error('Failed to parse generated questions:', error);
+      throw new HttpException(
+        'Failed to parse AI response',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }

@@ -30,17 +30,29 @@ const PDFPage = dynamic(
 
 interface DocumentPreviewProps {
   fileUrl: string;
-  fileName: string;
+  fileName?: string;
   onClose?: () => void;
 }
 
 type FileType = "pdf" | "docx" | "pptx" | "unknown";
 
-function getFileType(fileName: string): FileType {
-  const ext = fileName.toLowerCase().split(".").pop();
-  if (ext === "pdf") return "pdf";
-  if (ext === "docx" || ext === "doc") return "docx";
-  if (ext === "pptx" || ext === "ppt") return "pptx";
+function getFileType(fileName: string | undefined, fileUrl?: string): FileType {
+  // Try to get extension from fileName first
+  if (fileName) {
+    const ext = fileName.toLowerCase().split(".").pop();
+    if (ext === "pdf") return "pdf";
+    if (ext === "docx" || ext === "doc") return "docx";
+    if (ext === "pptx" || ext === "ppt") return "pptx";
+  }
+  
+  // Fallback: try to detect from fileUrl
+  if (fileUrl) {
+    const urlLower = fileUrl.toLowerCase();
+    if (urlLower.includes('.pdf')) return "pdf";
+    if (urlLower.includes('.docx') || urlLower.includes('.doc')) return "docx";
+    if (urlLower.includes('.pptx') || urlLower.includes('.ppt')) return "pptx";
+  }
+  
   return "unknown";
 }
 
@@ -94,10 +106,17 @@ function PDFPreview({ fileUrl }: { fileUrl: string }) {
   }
 
   if (error) {
+    // Fallback to iframe if react-pdf fails
     return (
-      <div className="flex flex-col items-center justify-center h-full text-red-500">
-        <AlertCircle className="w-12 h-12 mb-4" />
-        <p>Failed to load PDF: {error}</p>
+      <div className="flex flex-col h-full">
+        <div className="flex items-center justify-between px-4 py-2 bg-yellow-50 border-b border-yellow-200">
+          <p className="text-sm text-yellow-800">Using fallback PDF viewer</p>
+        </div>
+        <iframe
+          src={fileUrl}
+          className="flex-1 w-full border-0"
+          title="PDF Document"
+        />
       </div>
     );
   }
@@ -825,7 +844,7 @@ function UnknownPreview({ fileUrl, fileName }: { fileUrl: string; fileName: stri
 
 // Main Document Preview Component
 export function DocumentPreview({ fileUrl, fileName, onClose }: DocumentPreviewProps) {
-  const fileType = getFileType(fileName);
+  const fileType = getFileType(fileName, fileUrl);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -835,7 +854,7 @@ export function DocumentPreview({ fileUrl, fileName, onClose }: DocumentPreviewP
           <div className="flex items-center gap-3">
             <FileText className="w-5 h-5 text-[#63b3ed]" />
             <span className="font-medium text-[#0d1b3e] truncate max-w-md">
-              {fileName}
+              {fileName || 'Document'}
             </span>
             <span className="px-2 py-0.5 rounded bg-[#e8ecf4] text-xs text-[#4a5568] uppercase">
               {fileType}
@@ -844,7 +863,7 @@ export function DocumentPreview({ fileUrl, fileName, onClose }: DocumentPreviewP
           <div className="flex items-center gap-2">
             <a
               href={fileUrl}
-              download={fileName}
+              download={fileName || 'document'}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-[#edf0f7] text-sm text-[#4a5568] hover:border-[#63b3ed] hover:text-[#63b3ed] transition-colors"
             >
               <Download className="w-4 h-4" />
@@ -883,7 +902,7 @@ export function DocumentPreviewInline({
   fileName: string;
   className?: string;
 }) {
-  const fileType = getFileType(fileName);
+  const fileType = getFileType(fileName, fileUrl);
 
   return (
     <div className={`w-full h-full min-h-[400px] bg-white rounded-xl border border-[#edf0f7] overflow-hidden ${className}`}>

@@ -1,7 +1,8 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { ExamQuestionEntity } from './entities/exam-question.entity';
+import { SearchHistoryEntity } from './entities/search-history.entity';
 import { ExamParserService } from './exam-parser.service';
 import { EmbeddingService } from './embedding.service';
 import {
@@ -17,6 +18,8 @@ export class ExamPipelineService {
   constructor(
     @InjectRepository(ExamQuestionEntity)
     private readonly questionRepository: Repository<ExamQuestionEntity>,
+    @InjectRepository(SearchHistoryEntity)
+    private readonly searchHistoryRepo: Repository<SearchHistoryEntity>,
     private readonly examParserService: ExamParserService,
     private readonly embeddingService: EmbeddingService,
   ) {}
@@ -181,9 +184,17 @@ export class ExamPipelineService {
     try {
       for (const question of questions) {
         try {
+          // Validate question text exists
+          if (!question.text || question.text.trim() === '') {
+            this.logger.warn(`Skipping question ${question.id} with empty text`);
+            errors.push(`Failed to store question: Question text is empty`);
+            continue;
+          }
+
           const entity = this.questionRepository.create({
             id: question.id,
-            text: question.text,
+            questionText: question.text, // Use questionText directly instead of text alias
+            questionType: 'open', // Default type
             options: question.options,
             correctAnswer: question.correctAnswer,
             topic: question.topic,
@@ -193,6 +204,9 @@ export class ExamPipelineService {
               ? `[${question.embedding.join(',')}]`
               : null,
             documentId,
+            status: 'pending',
+            extractionConfidence: 0.8, // Default confidence for old pipeline
+            extractedAt: new Date(),
           });
 
           await queryRunner.manager.save(entity);
@@ -217,13 +231,20 @@ export class ExamPipelineService {
   }
 
   /**
-   * Semantic search using vector similarity
+   * Enhanced semantic search with verified content boost and filtering
    */
   async semanticSearch(
     query: string,
+    userId?: string,
     limit: number = 10,
     minSimilarity: number = 0.5,
-    filters?: { topic?: string; difficulty?: string },
+    filters?: { 
+      topic?: string; 
+      difficulty?: string;
+      classLevel?: string;
+      subject?: string;
+      verifiedOnly?: boolean;
+    },
   ): Promise<SemanticSearchResult[]> {
     this.logger.log(`Semantic search: "${query}" (limit: ${limit})`);
 
@@ -233,6 +254,7 @@ export class ExamPipelineService {
     // Build SQL query with vector similarity
     let sqlQuery = this.questionRepository
       .createQueryBuilder('q')
+      .leftJoin('documents', 'd', 'd.id = q.documentId')
       .select([
         'q.id',
         'q.text',
@@ -243,11 +265,14 @@ export class ExamPipelineService {
         'q.explanation',
         'q.documentId',
       ])
+      .addSelect('d.title', 'documentTitle')
+      .addSelect('d.is_verified', 'isVerified')
       .addSelect(
         `1 - (q.embedding <=> '[${queryEmbedding.join(',')}]')`,
         'similarity',
       )
       .where('q.embedding IS NOT NULL')
+      .andWhere('q.deletedAt IS NULL') // Exclude soft-deleted
       .andWhere(`1 - (q.embedding <=> '[${queryEmbedding.join(',')}]') >= :minSimilarity`, {
         minSimilarity,
       });
@@ -261,9 +286,85 @@ export class ExamPipelineService {
         difficulty: filters.difficulty,
       });
     }
+    if (filters?.classLevel) {
+      sqlQuery = sqlQuery.andWhere('d.class_level = :classLevel', {
+        classLevel: filters.classLevel,
+      });
+    }
+    if (filters?.subject) {
+      sqlQuery = sqlQuery.andWhere('LOWER(d.subject) = LOWER(:subject)', {
+        subject: filters.subject,
+      });
+    }
+    if (filters?.verifiedOnly) {
+      sqlQuery = sqlQuery.andWhere('d.is_verified = true');
+    }
 
-    // Order by similarity and limit
+    // Boost verified content in ranking
     const results = await sqlQuery
+      .orderBy('CASE WHEN d.is_verified = true THEN 0 ELSE 1 END', 'ASC')
+      .addOrderBy('similarity', 'DESC')
+      .limit(limit)
+      .getRawMany();
+
+    // Save search history if userId provided
+    if (userId) {
+      await this.saveSearchHistory(userId, query, results.length, filters);
+    }
+
+    return results.map((r) => ({
+      question: {
+        id: r.q_id,
+        text: r.q_text,
+        options: r.q_options,
+        correctAnswer: r.q_correctAnswer,
+        topic: r.q_topic,
+        difficulty: r.q_difficulty,
+        explanation: r.q_explanation,
+        documentId: r.q_documentId,
+      },
+      similarity: parseFloat(r.similarity),
+      documentTitle: r.documentTitle,
+      isVerified: r.isVerified,
+    }));
+  }
+
+  /**
+   * Get related questions based on similarity to a question
+   */
+  async getRelatedQuestions(
+    questionId: string,
+    limit: number = 5,
+  ): Promise<SemanticSearchResult[]> {
+    // Get the source question
+    const sourceQuestion = await this.findById(questionId);
+    if (!sourceQuestion || !sourceQuestion.embedding) {
+      return [];
+    }
+
+    // Find similar questions using vector similarity
+    const results = await this.questionRepository
+      .createQueryBuilder('q')
+      .leftJoin('documents', 'd', 'd.id = q.documentId')
+      .select([
+        'q.id',
+        'q.text',
+        'q.options',
+        'q.correctAnswer',
+        'q.topic',
+        'q.difficulty',
+        'q.explanation',
+        'q.documentId',
+      ])
+      .addSelect('d.title', 'documentTitle')
+      .addSelect('d.is_verified', 'isVerified')
+      .addSelect(
+        `1 - (q.embedding <=> '${sourceQuestion.embedding}')`,
+        'similarity',
+      )
+      .where('q.id != :questionId', { questionId })
+      .andWhere('q.embedding IS NOT NULL')
+      .andWhere('q.deletedAt IS NULL') // Exclude soft-deleted
       .orderBy('similarity', 'DESC')
       .limit(limit)
       .getRawMany();
@@ -280,11 +381,66 @@ export class ExamPipelineService {
         documentId: r.q_documentId,
       },
       similarity: parseFloat(r.similarity),
+      documentTitle: r.documentTitle,
+      isVerified: r.isVerified,
     }));
   }
 
   /**
-   * Get all questions with pagination
+   * Save search history
+   */
+  private async saveSearchHistory(
+    userId: string,
+    query: string,
+    resultsCount: number,
+    filters?: any,
+  ): Promise<void> {
+    try {
+      const history = this.searchHistoryRepo.create({
+        userId,
+        query,
+        resultsCount,
+        filters: filters || null,
+      });
+      await this.searchHistoryRepo.save(history);
+    } catch (error) {
+      this.logger.error('Failed to save search history:', error);
+      // Don't throw - search history is not critical
+    }
+  }
+
+  /**
+   * Get user's search history
+   */
+  async getSearchHistory(userId: string, limit: number = 20): Promise<SearchHistoryEntity[]> {
+    return this.searchHistoryRepo.find({
+      where: { userId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  /**
+   * Get popular searches (across all users)
+   */
+  async getPopularSearches(limit: number = 10): Promise<Array<{ query: string; count: number }>> {
+    const results = await this.searchHistoryRepo
+      .createQueryBuilder('sh')
+      .select('sh.query', 'query')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('sh.query')
+      .orderBy('count', 'DESC')
+      .limit(limit)
+      .getRawMany();
+
+    return results.map((r) => ({
+      query: r.query,
+      count: parseInt(r.count, 10),
+    }));
+  }
+
+  /**
+   * Get all questions with pagination (excludes soft-deleted)
    */
   async findAll(
     page: number = 1,
@@ -293,10 +449,12 @@ export class ExamPipelineService {
   ) {
     const skip = (page - 1) * limit;
 
-    let query = this.questionRepository.createQueryBuilder('q');
+    let query = this.questionRepository.createQueryBuilder('q')
+      .leftJoinAndSelect('q.document', 'document')
+      .where('q.deletedAt IS NULL'); // Exclude soft-deleted questions
 
     if (filters?.topic) {
-      query = query.where('q.topic = :topic', { topic: filters.topic });
+      query = query.andWhere('q.topic = :topic', { topic: filters.topic });
     }
     if (filters?.difficulty) {
       query = query.andWhere('q.difficulty = :difficulty', {
@@ -320,30 +478,110 @@ export class ExamPipelineService {
   }
 
   /**
-   * Get question by ID
+   * Update question with comprehensive fields
    */
-  async findById(id: string): Promise<ExamQuestionEntity | null> {
-    return this.questionRepository.findOne({ where: { id } });
+  async updateQuestion(
+    id: string, 
+    updateData: {
+      questionText?: string;
+      questionType?: string;
+      options?: string[] | null;
+      correctAnswer?: string | null;
+      difficulty?: string;
+      topic?: string;
+      visualContentRef?: string;
+      hasVisualContent?: boolean;
+      visualContentType?: string;
+    }
+  ): Promise<ExamQuestionEntity> {
+    const question = await this.questionRepository.findOne({ 
+      where: { id, deletedAt: IsNull() } 
+    });
+    
+    if (!question) {
+      throw new HttpException('Question not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Update fields if provided
+    if (updateData.questionText !== undefined) {
+      question.questionText = updateData.questionText;
+    }
+    if (updateData.questionType !== undefined) {
+      question.questionType = updateData.questionType;
+    }
+    if (updateData.options !== undefined) {
+      question.options = updateData.options;
+    }
+    if (updateData.correctAnswer !== undefined) {
+      question.correctAnswer = updateData.correctAnswer;
+    }
+    if (updateData.difficulty !== undefined) {
+      question.difficulty = updateData.difficulty;
+    }
+    if (updateData.topic !== undefined) {
+      question.topic = updateData.topic;
+    }
+    if (updateData.visualContentRef !== undefined) {
+      question.visualContentRef = updateData.visualContentRef;
+    }
+    if (updateData.hasVisualContent !== undefined) {
+      question.hasVisualContent = updateData.hasVisualContent;
+    }
+    if (updateData.visualContentType !== undefined) {
+      question.visualContentType = updateData.visualContentType;
+    }
+
+    question.updatedAt = new Date();
+
+    return await this.questionRepository.save(question);
   }
 
   /**
-   * Get all questions from a specific document
+   * Soft delete a question
+   */
+  async softDeleteQuestion(id: string): Promise<void> {
+    const question = await this.questionRepository.findOne({ 
+      where: { id, deletedAt: IsNull() } 
+    });
+    
+    if (!question) {
+      throw new HttpException('Question not found', HttpStatus.NOT_FOUND);
+    }
+
+    question.deletedAt = new Date();
+    await this.questionRepository.save(question);
+    
+    this.logger.log(`Question ${id} soft deleted`);
+  }
+
+  /**
+   * Get question by ID (excludes soft-deleted)
+   */
+  async findById(id: string): Promise<ExamQuestionEntity | null> {
+    return this.questionRepository.findOne({ 
+      where: { id, deletedAt: IsNull() } 
+    });
+  }
+
+  /**
+   * Get all questions from a specific document (excludes soft-deleted)
    */
   async findByDocumentId(documentId: string): Promise<ExamQuestionEntity[]> {
     return this.questionRepository.find({
-      where: { documentId },
+      where: { documentId, deletedAt: IsNull() },
       order: { createdAt: 'ASC' },
     });
   }
 
   /**
-   * Get all unique topics
+   * Get all unique topics (excludes soft-deleted)
    */
   async getTopics(): Promise<string[]> {
     const results = await this.questionRepository
       .createQueryBuilder('q')
       .select('DISTINCT q.topic', 'topic')
       .where('q.topic IS NOT NULL')
+      .andWhere('q.deletedAt IS NULL')
       .orderBy('q.topic', 'ASC')
       .getRawMany();
 
@@ -351,15 +589,19 @@ export class ExamPipelineService {
   }
 
   /**
-   * Get statistics
+   * Get statistics (excludes soft-deleted)
    */
   async getStats() {
-    const total = await this.questionRepository.count();
+    const total = await this.questionRepository.count({ 
+      where: { deletedAt: IsNull() } 
+    });
+    
     const byTopic = await this.questionRepository
       .createQueryBuilder('q')
       .select('q.topic', 'topic')
       .addSelect('COUNT(*)', 'count')
       .where('q.topic IS NOT NULL')
+      .andWhere('q.deletedAt IS NULL')
       .groupBy('q.topic')
       .getRawMany();
 
@@ -368,6 +610,7 @@ export class ExamPipelineService {
       .select('q.difficulty', 'difficulty')
       .addSelect('COUNT(*)', 'count')
       .where('q.difficulty IS NOT NULL')
+      .andWhere('q.deletedAt IS NULL')
       .groupBy('q.difficulty')
       .getRawMany();
 
