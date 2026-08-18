@@ -193,7 +193,27 @@ export default function QuestionBank() {
       setTimeout(() => setShowToast(false), 5000);
       return;
     }
-    addQuestion(q);
+    
+    // Get current user name
+    const token = localStorage.getItem('auth_token');
+    let userName = 'Unknown';
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        userName = payload.fullName || payload.name || payload.username || 'Unknown';
+      } catch (err) {
+        console.error('Failed to parse token:', err);
+      }
+    }
+    
+    // Add question with creation metadata
+    const questionWithMetadata: Question = {
+      ...q,
+      createdBy: userName,
+      createdAt: new Date().toISOString(),
+    };
+    
+    addQuestion(questionWithMetadata);
   };
 
   return (

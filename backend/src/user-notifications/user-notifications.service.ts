@@ -4,6 +4,7 @@ import { Repository, LessThan, In } from 'typeorm';
 import { UserNotificationEntity } from './entities/user-notification.entity';
 import { CreateNotificationDto } from './dto/user-notification.dto';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { UserEntity } from '../auth/entities/user.entity';
 
 type Priority = 'low' | 'medium' | 'high' | 'critical';
 
@@ -14,6 +15,8 @@ export class UserNotificationsService {
   constructor(
     @InjectRepository(UserNotificationEntity)
     private notificationRepository: Repository<UserNotificationEntity>,
+    @InjectRepository(UserEntity)
+    private userRepository: Repository<UserEntity>,
     @Inject(forwardRef(() => NotificationsGateway))
     private notificationsGateway: NotificationsGateway,
   ) {}
@@ -57,6 +60,16 @@ export class UserNotificationsService {
       { userId, read: false },
       { read: true, readAt: new Date() },
     );
+  }
+
+  async deleteNotification(id: string, userId: string): Promise<void> {
+    const notification = await this.notificationRepository.findOne({
+      where: { id, userId },
+    });
+
+    if (notification) {
+      await this.notificationRepository.delete(id);
+    }
   }
 
   async deleteOldNotifications(daysOld = 30): Promise<void> {
@@ -130,8 +143,43 @@ export class UserNotificationsService {
     additionalData?: any,
   ): Promise<void> {
     try {
+      this.logger.log(`Creating admin notification: type=${type}, title=${title}`);
+      
+      // Find all admin users
+      const admins = await this.userRepository.find({
+        where: { role: 'admin' },
+      });
+
+      if (admins.length === 0) {
+        this.logger.warn('No admin users found to send notification to');
+        return;
+      }
+
+      this.logger.log(`Found ${admins.length} admin(s): ${admins.map(a => `${a.email} (${a.id})`).join(', ')}`);
+
+      // Create notification for each admin in database
+      for (const admin of admins) {
+        this.logger.log(`Creating notification for admin ${admin.email} (${admin.id})`);
+        const notification = this.notificationRepository.create({
+          userId: admin.id,
+          type,
+          title,
+          message,
+          metadata: {
+            priority,
+            category: this.getCategoryFromType(type),
+            actionUrl,
+            actionText,
+            ...additionalData,
+          },
+        });
+        const saved = await this.notificationRepository.save(notification);
+        this.logger.log(`Notification saved to DB with ID: ${saved.id}`);
+      }
+
       // Send via WebSocket to all connected admins
-      this.notificationsGateway.sendToAdmins({
+      this.logger.log(`Sending WebSocket notification to admins...`);
+      const sent = this.notificationsGateway.sendToAdmins({
         message,
         type,
         link: actionUrl,
@@ -139,9 +187,9 @@ export class UserNotificationsService {
         data: { priority, actionText, ...additionalData },
       });
 
-      this.logger.log(`Notification sent to all admins: ${type}`);
+      this.logger.log(`Notification sent to ${admins.length} admin(s): ${type} (WebSocket: ${sent})`);
     } catch (error) {
-      this.logger.error(`Failed to send admin notification: ${error.message}`);
+      this.logger.error(`Failed to send admin notification: ${error.message}`, error.stack);
     }
   }
 
@@ -463,8 +511,8 @@ export class UserNotificationsService {
       'new_user',
       'New User Registration',
       `${fullName} registered as ${role}.`,
-      'low',
-      `/dashboard/admin/users/${userId}`,
+      'medium',
+      `/dashboard/admin/users?userId=${userId}`,
       'View User',
       { fullName, role, userId },
     );
@@ -608,6 +656,92 @@ export class UserNotificationsService {
       severity,
       '/dashboard/admin/system',
       'View System',
+    );
+  }
+
+  // ============================================================================
+  // COLLABORATION NOTIFICATIONS
+  // ============================================================================
+
+  async notifyCollaborationInvite(
+    userId: string,
+    inviterName: string,
+    resourceId: string,
+    resourceType: 'document' | 'exam',
+    role: string,
+  ): Promise<void> {
+    const resourceLabel = resourceType === 'document' ? 'resource' : 'exam';
+    
+    await this.createAndSend(
+      userId,
+      'collaboration_invite',
+      'Collaboration Invitation',
+      `${inviterName} invited you to collaborate on a ${resourceLabel} as ${role}.`,
+      'medium',
+      '/dashboard/invitations',
+      'View Invitation',
+      { inviterName, resourceId, resourceType, role },
+    );
+  }
+
+  async notifyCollaborationAccepted(
+    userId: string,
+    collaboratorName: string,
+    resourceId: string,
+    resourceType: 'document' | 'exam',
+  ): Promise<void> {
+    const resourceLabel = resourceType === 'document' ? 'resource' : 'exam';
+    const actionUrl = resourceType === 'exam' 
+      ? `/dashboard/exam-builder?examId=${resourceId}`
+      : `/dashboard/resources?highlight=${resourceId}`;
+    
+    await this.createAndSend(
+      userId,
+      'collaboration_accepted',
+      'Invitation Accepted',
+      `${collaboratorName} accepted your invitation to collaborate on your ${resourceLabel}.`,
+      'low',
+      actionUrl,
+      'Open Workspace',
+      { collaboratorName, resourceId, resourceType },
+    );
+  }
+
+  async notifyNewComment(
+    userId: string,
+    commenterName: string,
+    resourceId: string,
+    resourceType: 'document' | 'exam',
+    commentPreview: string,
+  ): Promise<void> {
+    await this.createAndSend(
+      userId,
+      'new_comment',
+      'New Comment',
+      `${commenterName}: "${commentPreview.substring(0, 100)}${commentPreview.length > 100 ? '...' : ''}"`,
+      'low',
+      `/dashboard/${resourceType === 'exam' ? 'exam-builder' : 'resources'}?id=${resourceId}`,
+      'View Comment',
+      { commenterName, resourceId, resourceType, commentPreview },
+    );
+  }
+
+  async notifyMention(
+    userId: string,
+    mentionerName: string,
+    resourceId: string,
+    resourceType: 'document' | 'exam',
+    commentPreview: string,
+  ): Promise<void> {
+    await this.createAndSend(
+      userId,
+      'mention',
+      'You were mentioned',
+      `${mentionerName} mentioned you: "${commentPreview.substring(0, 100)}${commentPreview.length > 100 ? '...' : ''}"`,
+      'medium',
+      `/dashboard/${resourceType === 'exam' ? 'exam-builder' : 'resources'}?id=${resourceId}`,
+      'View Comment',
+      { mentionerName, resourceId, resourceType, commentPreview },
     );
   }
 

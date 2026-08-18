@@ -19,7 +19,7 @@ import { PDFLayoutAnalyzerService } from '../exam-pipeline/pdf-layout-analyzer.s
 @Module({
   imports: [
     TypeOrmModule.forFeature([DocumentModerationEntity, DocumentEntity, ExamQuestionEntity]),
-    AiModule,
+    forwardRef(() => AiModule), // Use forwardRef to resolve circular dependency
     forwardRef(() => DocumentsModule),
     UserNotificationsModule,
   ],

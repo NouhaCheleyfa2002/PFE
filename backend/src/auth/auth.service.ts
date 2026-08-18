@@ -125,17 +125,24 @@ export class AuthService implements OnModuleInit {
 
     // Notify admins about new user registration
     try {
+      this.logger.log(`Attempting to notify admins about new user: ${savedUser.fullName} (${savedUser.id})`);
       await this.userNotificationsService.notifyNewUserRegistration(
         savedUser.fullName,
         savedUser.role,
         savedUser.id
       );
+      this.logger.log(`Admin notification sent successfully for user: ${savedUser.fullName}`);
     } catch (error) {
-      this.logger.warn(`Failed to send admin registration notification: ${error.message}`);
+      this.logger.error(`Failed to send admin registration notification: ${error.message}`, error.stack);
     }
 
     // Generate JWT
-    const payload = { sub: savedUser.id, email: savedUser.email, role: savedUser.role };
+    const payload = { 
+      sub: savedUser.id, 
+      email: savedUser.email, 
+      role: savedUser.role,
+      fullName: savedUser.fullName,
+    };
     const access_token = this.jwtService.sign(payload);
 
     // Return user without password
@@ -160,7 +167,12 @@ export class AuthService implements OnModuleInit {
     }
 
     // Generate JWT
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const payload = { 
+      sub: user.id, 
+      email: user.email, 
+      role: user.role,
+      fullName: user.fullName,
+    };
     const access_token = this.jwtService.sign(payload);
 
     // Return user without password
@@ -209,5 +221,33 @@ export class AuthService implements OnModuleInit {
     } catch (error) {
       this.logger.warn(`Failed to send password change notification: ${error.message}`);
     }
+  }
+
+  async searchVerifiedTeachers(query: string): Promise<Omit<User, 'password'>[]> {
+    if (!query || query.trim().length < 2) {
+      return [];
+    }
+
+    const searchTerm = `%${query.toLowerCase()}%`;
+    const users = await this.userRepository
+      .createQueryBuilder('user')
+      .where('user.role = :role', { role: 'teacher' })
+      .andWhere('user.verified = :verified', { verified: true })
+      .andWhere('user.verificationStatus = :status', { status: 'verified' })
+      .andWhere('(LOWER(user.fullName) LIKE :search OR LOWER(user.email) LIKE :search)', { search: searchTerm })
+      .select([
+        'user.id',
+        'user.email',
+        'user.fullName',
+        'user.university',
+        'user.specialty',
+        'user.verified',
+        'user.verificationStatus',
+        'user.role',
+      ])
+      .limit(20)
+      .getMany();
+
+    return users.map(({ password, ...u }) => u as any);
   }
 }

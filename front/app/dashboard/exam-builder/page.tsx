@@ -12,13 +12,21 @@ import {
   GraduationCap,
   Layout,
   X,
+  Users,
+  Sparkles,
 } from "lucide-react";
+import { toast } from "react-hot-toast";
 import { ExamProvider, useExam, PreviewMode } from "@/lib/exam-context";
 import { EDUCATION_LEVELS, type EducationLevel } from "@/lib/education-config";
 import QuestionBank from "@/components/exam-builder/QuestionBank";
 import ExamPreview from "@/components/exam-builder/ExamPreview";
 import { TemplateSelectionModal } from "@/components/templates/TemplateSelectionModal";
 import { type TemplateResponse } from "@/lib/api/templates";
+import { ActivityFeed, CollaboratorManager, CollaborationSidebar } from "@/components/collaboration";
+import CollaborationToast from "@/components/collaboration/CollaborationToast";
+import WebSocketDebugPanel from "@/components/collaboration/WebSocketDebugPanel";
+import { useWebSocket } from "@/lib/websocket-context";
+import AIExamGeneratorWizard from "@/components/ai/AIExamGeneratorWizard";
 
 /* ─── Save indicator ───────────────────────────────────────────────────────── */
 
@@ -99,13 +107,245 @@ function ValidationBadge() {
 
 function ExamBuilderInner() {
   const previewRef = useRef<HTMLDivElement>(null);
-  const { exam, clearExam, totalPoints, pointsRemaining, previewMode, setClassLevel, setTemplateId, setMaxPoints } = useExam();
+  const { 
+    exam, 
+    clearExam, 
+    totalPoints, 
+    pointsRemaining, 
+    previewMode, 
+    setClassLevel, 
+    setTemplateId, 
+    setMaxPoints, 
+    setExamId,
+    setTitle,
+    setSubject,
+    setDuration,
+    setInstructions,
+    addQuestion,
+    setWebSocket,
+  } = useExam();
   const isEditorMode = previewMode === "edit";
+  const { joinExam, leaveExam, isConnected, socket } = useWebSocket();
   
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [selectedTemplateName, setSelectedTemplateName] = useState<string | null>(null);
   const [importedTemplate, setImportedTemplate] = useState<TemplateResponse | null>(null);
   const [showMaxPointsInput, setShowMaxPointsInput] = useState(false);
+  const [isSavingToDb, setIsSavingToDb] = useState(false);
+  const [showCollaborators, setShowCollaborators] = useState(false);
+  const [showAIWizard, setShowAIWizard] = useState(false);
+  
+  // Workspace/Exam management
+  const [availableExams, setAvailableExams] = useState<any[]>([]);
+  const [loadingExams, setLoadingExams] = useState(false);
+  const [currentExamId, setCurrentExamId] = useState<string>("");
+
+  // Get user info for collaboration
+  const [userId, setUserId] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [isOwner, setIsOwner] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Get user info from localStorage or API
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        const userId = payload.sub || payload.userId || "";
+        setUserId(userId);
+        
+        // Try different variations of name field - prioritize fullName
+        const name = payload.fullName || payload['fullName'] || payload.name || payload.username || 'User';
+        setUserName(name);
+        
+        console.log('[ExamBuilder] User info from token:', { 
+          userId, 
+          userName: name, 
+          rawPayload: payload,
+          availableFields: Object.keys(payload)
+        });
+      } catch (err) {
+        console.error('[ExamBuilder] Failed to parse token:', err);
+      }
+    }
+    
+    // Check if user is owner (for now, assume true if they're viewing)
+    // In real implementation, check against exam.ownerId
+    setIsOwner(true);
+    
+    // Load available exams
+    loadAvailableExams();
+
+    // Check URL for examId parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const examIdFromUrl = urlParams.get('examId');
+    console.log('[ExamBuilder] URL parameters:', { examIdFromUrl, fullUrl: window.location.href });
+    
+    if (examIdFromUrl && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(examIdFromUrl)) {
+      console.log('[ExamBuilder] Loading exam from URL:', examIdFromUrl);
+      loadExam(examIdFromUrl);
+    } else if (examIdFromUrl) {
+      console.warn('[ExamBuilder] Invalid exam ID format in URL:', examIdFromUrl);
+    }
+  }, []);
+
+  // Pass WebSocket to exam context for real-time updates
+  useEffect(() => {
+    setWebSocket(socket);
+  }, [socket, setWebSocket]);
+
+  // Join exam collaboration session when exam ID changes
+  useEffect(() => {
+    // Use exam.id from context if currentExamId not set
+    const activeExamId = currentExamId || exam.id;
+    
+    if (activeExamId && isConnected && userName) {
+      // Validate it's a real UUID
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeExamId)) {
+        console.log(`Joining exam collaboration session: ${activeExamId}`);
+        joinExam(activeExamId, userName);
+
+        // Leave exam when component unmounts or exam changes
+        return () => {
+          console.log(`Leaving exam collaboration session: ${activeExamId}`);
+          leaveExam(activeExamId);
+        };
+      }
+    }
+  }, [currentExamId, exam.id, isConnected, userName, joinExam, leaveExam]);
+
+  const loadAvailableExams = async () => {
+    setLoadingExams(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('http://localhost:3000/exams', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Exams API response:', data);
+        
+        // Handle both array and paginated responses
+        let exams;
+        if (Array.isArray(data)) {
+          exams = data;
+        } else if (data.exams && Array.isArray(data.exams)) {
+          // Paginated response
+          exams = data.exams;
+        } else {
+          console.warn('Unexpected exams response format:', data);
+          setAvailableExams([]);
+          return;
+        }
+        
+        // Ensure exams is an array
+        if (Array.isArray(exams)) {
+          console.log(`Loaded ${exams.length} exams:`, exams.map(e => ({ id: e.id, title: e.title })));
+          setAvailableExams(exams);
+        } else {
+          console.warn('Exams is not an array:', exams);
+          setAvailableExams([]);
+        }
+      } else {
+        console.error('Failed to load exams:', response.status);
+        setAvailableExams([]);
+      }
+    } catch (error) {
+      console.error('Failed to load exams:', error);
+      setAvailableExams([]);
+    } finally {
+      setLoadingExams(false);
+    }
+  };
+
+  const loadExam = async (examId: string) => {
+    console.log('Loading exam with ID:', examId);
+    try {
+      const token = localStorage.getItem('auth_token');
+      if (!token) {
+        toast.error('Please login to access exams');
+        return;
+      }
+
+      const response = await fetch(`http://localhost:3000/exams/${examId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      
+      console.log('Load exam response status:', response.status);
+      
+      if (response.ok) {
+        const examData = await response.json();
+        console.log('Loaded exam data:', examData);
+        
+        // Set current exam ID for collaboration
+        setCurrentExamId(examData.id);
+        
+        // Update URL with exam ID
+        window.history.pushState({}, '', `/dashboard/exam-builder?examId=${examData.id}`);
+        
+        // Load exam metadata into context
+        setExamId(examData.id);
+        setTitle(examData.title || '');
+        setClassLevel(examData.classLevel || '');
+        setSubject(examData.subject || '');
+        setDuration(examData.duration?.toString() || '');
+        setInstructions(examData.instructions || '');
+        setMaxPoints(examData.maxPoints || null);
+        setTemplateId(examData.templateId || null);
+        
+        // Load questions if they exist
+        if (Array.isArray(examData.questions) && examData.questions.length > 0) {
+          // Clear existing questions first
+          clearExam();
+          
+          // Re-set metadata after clear
+          setExamId(examData.id);
+          setTitle(examData.title || '');
+          setClassLevel(examData.classLevel || '');
+          setSubject(examData.subject || '');
+          setDuration(examData.duration?.toString() || '');
+          setInstructions(examData.instructions || '');
+          setMaxPoints(examData.maxPoints || null);
+          
+          // Add each question
+          examData.questions.forEach((question: any) => {
+            addQuestion(question);
+          });
+          
+          console.log(`Loaded ${examData.questions.length} questions`);
+        }
+        
+        toast.success(`Exam "${examData.title || 'Untitled'}" loaded successfully`);
+      } else if (response.status === 404) {
+        console.error('Exam not found with ID:', examId);
+        toast.error('Exam not found. It may have been deleted.');
+        // Clear the invalid exam ID from URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('examId');
+        window.history.replaceState({}, '', url.toString());
+      } else if (response.status === 403) {
+        console.error('Access denied to exam:', examId);
+        toast.error('You do not have permission to access this exam.');
+        // Clear the unauthorized exam ID from URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('examId');
+        window.history.replaceState({}, '', url.toString());
+      } else {
+        console.error('Failed to load exam:', response.status);
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Error details:', errorData);
+        toast.error('Failed to load exam');
+        // Clear the problematic exam ID from URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('examId');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } catch (error) {
+      console.error('Failed to load exam:', error);
+      toast.error('Failed to load exam. Please try again.');
+    }
+  };
 
   // Don't force template selection on load - let user choose when they want
 
@@ -149,6 +389,71 @@ function ExamBuilderInner() {
       setTemplateId(null);
       setSelectedTemplateName("Default Template");
       setShowTemplateModal(false);
+    }
+  };
+
+  const handleSaveExam = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      toast.error('Please login to save exams');
+      return;
+    }
+
+    if (!exam.title || exam.questions.length === 0) {
+      toast.error('Please add a title and at least one question');
+      return;
+    }
+
+    setIsSavingToDb(true);
+    const savingToast = toast.loading('Saving exam...');
+    
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      
+      // Only use PUT if we have a valid UUID
+      const isValidUUID = exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id);
+      const url = isValidUUID ? `${API_URL}/exams/${exam.id}` : `${API_URL}/exams`;
+      const method = isValidUUID ? 'PUT' : 'POST';
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: exam.title,
+          classLevel: exam.classLevel,
+          subject: exam.subject,
+          duration: exam.duration,
+          instructions: exam.instructions,
+          questions: exam.questions,
+          templateId: exam.templateId,
+          maxPoints: exam.maxPoints,
+        }),
+      });
+
+      if (response.ok) {
+        const savedExam = await response.json();
+        setExamId(savedExam.id);
+        setCurrentExamId(savedExam.id);
+        
+        // Update URL with exam ID
+        window.history.pushState({}, '', `/dashboard/exam-builder?examId=${savedExam.id}`);
+        
+        toast.success(
+          isValidUUID ? 'Exam updated successfully!' : 'Exam created successfully!',
+          { id: savingToast, duration: 3000 }
+        );
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to save exam: ${error.message || 'Unknown error'}`, { id: savingToast });
+      }
+    } catch (error) {
+      console.error('Failed to save exam:', error);
+      toast.error('Failed to save exam. Please try again.', { id: savingToast });
+    } finally {
+      setIsSavingToDb(false);
     }
   };
 
@@ -262,7 +567,8 @@ function ExamBuilderInner() {
             for (let i = 1; i <= totalPages; i++) {
               pdf.setPage(i);
               pdf.saveGraphicsState();
-              pdf.setGState(new pdf.GState({ opacity: template.watermarkOpacity || 0.1 }));
+              const gstate = new (pdf as any).GState({ opacity: template.watermarkOpacity || 0.1 });
+              pdf.setGState(gstate);
               pdf.text(template.watermarkText, pdfWidth / 2, pdfHeight / 2, {
                 align: "center",
                 angle: 45,
@@ -351,6 +657,17 @@ function ExamBuilderInner() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* AI Exam Generator Wizard */}
+      <AIExamGeneratorWizard
+        isOpen={showAIWizard}
+        onClose={() => setShowAIWizard(false)}
+        onExamGenerated={(generatedExam) => {
+          // TODO: Populate exam with generated content
+          toast.success('Exam generated successfully!');
+          setShowAIWizard(false);
+        }}
+      />
+
       {/* Template Selection Modal */}
       <TemplateSelectionModal
         isOpen={showTemplateModal}
@@ -360,20 +677,50 @@ function ExamBuilderInner() {
         onCreateNew={handleCreateNewTemplate}
       />
 
+      {/* Collaborators Modal */}
+      {showCollaborators && exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div className="flex items-center gap-3">
+                <Users className="w-6 h-6 text-blue-600" />
+                <h2 className="text-2xl font-bold text-gray-900">Manage Collaborators</h2>
+              </div>
+              <button
+                onClick={() => setShowCollaborators(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6">
+              <CollaboratorManager
+                resourceType="exam"
+                resourceId={exam.id}
+                currentUserId={userId}
+                isOwner={isOwner}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top bar */}
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <div className="flex-1">
-          <h1
-            style={{ fontFamily: "var(--font-heading), sans-serif" }}
-            className="text-2xl font-bold text-[#0d1b3e]"
-          >
-            Exam Builder
-          </h1>
-          <div className="flex items-center gap-3 mt-0.5">
-            <p className="text-sm text-[#8899bb]">
-              {exam.questions.length} question{exam.questions.length !== 1 && "s"}
-            </p>
-            <span className="text-[#cbd5e1]">·</span>
+        <div className="flex-1 flex items-center gap-4">
+          <div>
+            <h1
+              style={{ fontFamily: "var(--font-heading), sans-serif" }}
+              className="text-2xl font-bold text-[#0d1b3e]"
+            >
+              Exam Builder
+            </h1>
+            <div className="flex items-center gap-3 mt-0.5">
+              <p className="text-sm text-[#8899bb]">
+                {exam.questions.length} question{exam.questions.length !== 1 && "s"}
+              </p>
+              <span className="text-[#cbd5e1]">·</span>
             <div className="flex items-center gap-2">
               {exam.maxPoints ? (
                 <div className="flex items-center gap-2">
@@ -446,6 +793,39 @@ function ExamBuilderInner() {
               )}
             </div>
           </div>
+          </div>
+          
+          {/* Workspace Selector - Always visible in edit mode */}
+          {isEditorMode && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-[#0d1b3e]">Workspace:</span>
+              <select
+                value={currentExamId || exam.id || ''}
+                onChange={(e) => {
+                  const selectedId = e.target.value;
+                  if (selectedId === 'new') {
+                    clearExam();
+                    setCurrentExamId('');
+                    // Update URL to remove examId
+                    window.history.pushState({}, '', '/dashboard/exam-builder');
+                  } else if (selectedId) {
+                    loadExam(selectedId);
+                    // Update URL with new examId
+                    window.history.pushState({}, '', `/dashboard/exam-builder?examId=${selectedId}`);
+                  }
+                }}
+                className="px-4 py-2 rounded-lg border-2 border-[#63b3ed] text-sm font-medium outline-none focus:border-[#4299e1] transition-all bg-white text-[#0d1b3e] min-w-[200px]"
+              >
+                <option value="">➕ New Exam</option>
+                {Array.isArray(availableExams) && availableExams.length > 0 && <option disabled>──────────</option>}
+                {Array.isArray(availableExams) && availableExams.map((availableExam) => (
+                  <option key={availableExam.id} value={availableExam.id}>
+                    {availableExam.title || `Untitled Exam`} {(availableExam.id === exam.id || availableExam.id === currentExamId) && '✓'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -454,12 +834,39 @@ function ExamBuilderInner() {
           <PreviewModeToggle />
 
           {isEditorMode && (
-            <button
-              onClick={clearExam}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#edf0f7] text-sm text-[#8899bb] hover:border-red-300 hover:text-red-500 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" /> Clear
-            </button>
+            <>
+              <button
+                onClick={() => setShowAIWizard(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-semibold hover:from-purple-700 hover:to-blue-700 transition-all shadow-md hover:shadow-lg"
+              >
+                <Sparkles className="w-4 h-4" /> AI Generate
+              </button>
+              
+              <button
+                onClick={handleSaveExam}
+                disabled={isSavingToDb || exam.questions.length === 0}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isSavingToDb ? 'Saving...' : (exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id)) ? 'Update Exam' : 'Save Exam'}
+              </button>
+              
+              {/* Invite Collaborators Button - Only show for saved exams */}
+              {exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && (
+                <button
+                  onClick={() => setShowCollaborators(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[#edf0f7] bg-white text-sm text-[#0d1b3e] hover:border-[#63b3ed] hover:bg-blue-50 transition-colors"
+                >
+                  <Users className="w-4 h-4" /> Collaborators
+                </button>
+              )}
+              
+              <button
+                onClick={clearExam}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#edf0f7] text-sm text-[#8899bb] hover:border-red-300 hover:text-red-500 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" /> Clear
+              </button>
+            </>
           )}
 
           <button
@@ -472,80 +879,55 @@ function ExamBuilderInner() {
         </div>
       </div>
 
-      {/* Class Level Selector - NEW */}
-      {isEditorMode && (
-        <div className="mb-4 space-y-4">
-          {/* Template Selection */}
-          <div className="bg-white rounded-xl border border-[#edf0f7] p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 text-sm font-medium text-[#0d1b3e]">
-                  <Layout className="w-5 h-5 text-[#63b3ed]" />
-                  <span>Template:</span>
-                </div>
-                <span className="text-sm text-[#8899bb]">
-                  {selectedTemplateName || "No template selected"}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                {selectedTemplateName && (
-                  <button
-                    onClick={() => {
-                      setTemplateId(null);
-                      setSelectedTemplateName(null);
-                      setImportedTemplate(null);
-                    }}
-                    className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1"
-                    title="Remove template"
-                  >
-                    <X className="w-4 h-4" />
-                    Remove
-                  </button>
-                )}
-                <button
-                  onClick={handleChangeTemplate}
-                  className="px-3 py-1.5 text-sm text-white bg-[#63b3ed] hover:bg-[#4299e1] rounded-lg transition-colors"
-                >
-                  {selectedTemplateName ? "Change Template" : "Select Template"}
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* Collaboration Section */}
+      {isEditorMode && exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && userId && (
+        <>
+          {/* Real-time collaboration toast notifications */}
+          <CollaborationToast examId={exam.id} currentUserId={userId} />
+        </>
+      )}
 
-          {/* Class Level Selector */}
-          <div className="bg-white rounded-xl border border-[#edf0f7] p-4">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-[#0d1b3e]">
-                <GraduationCap className="w-5 h-5 text-[#63b3ed]" />
-                <span>Class Level:</span>
-              </div>
-              <select
-                value={exam.classLevel || ""}
-                onChange={(e) => setClassLevel(e.target.value as EducationLevel | "")}
-                className="flex-1 max-w-md px-4 py-2.5 rounded-lg border border-[#edf0f7] text-sm outline-none focus:border-[#63b3ed] focus:ring-2 focus:ring-[rgba(99,179,237,0.12)] transition-all bg-white text-[#0d1b3e]"
-              >
-                <option value="">Select a class level to filter questions...</option>
-                {EDUCATION_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-              {exam.classLevel && (
-                <span className="text-xs text-[#8899bb]">
-                  Questions will be filtered by this level
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* Live Comments Floating Button - REMOVED (using sidebar instead) */}
+
+      {/* Collaboration Sidebar */}
+      {isEditorMode && exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && (
+        <CollaborationSidebar 
+          examId={currentExamId || exam.id}
+          questions={exam.questions}
+          onNavigateToElement={(elementId) => {
+            console.log('Navigating to element:', elementId);
+            const element = document.querySelector(`[data-element-id="${elementId}"]`);
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              // Add highlight flash effect
+              element.classList.add('highlight-flash');
+              setTimeout(() => {
+                element.classList.remove('highlight-flash');
+              }, 2000);
+            } else {
+              console.warn('Element not found:', elementId);
+              // Debug: Log all elements with data-element-id
+              const allElements = document.querySelectorAll('[data-element-id]');
+              console.log('Available elements:', Array.from(allElements).map(el => el.getAttribute('data-element-id')));
+            }
+          }}
+        />
       )}
 
       {/* Main panels */}
       <div className="flex-1 flex gap-4 min-h-0">
         {isEditorMode && <QuestionBank />}
-        <ExamPreview ref={previewRef} importedTemplate={importedTemplate} />
+        <ExamPreview 
+          ref={previewRef} 
+          importedTemplate={importedTemplate} 
+          examId={currentExamId || exam.id || undefined}
+        />
       </div>
+      
+      {/* WebSocket Debug Panel (Development only) */}
+      {process.env.NODE_ENV === 'development' && exam.id && (
+        <WebSocketDebugPanel />
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DocumentEntity } from './entities/document.entity';
 import { Document, DocumentStatus } from './document.interface';
+import { ResourceCollaboratorEntity } from '../collaboration/entities/resource-collaborator.entity';
 
 @Injectable()
 export class DocumentsService {
@@ -11,6 +12,8 @@ export class DocumentsService {
   constructor(
     @InjectRepository(DocumentEntity)
     private readonly documentRepository: Repository<DocumentEntity>,
+    @InjectRepository(ResourceCollaboratorEntity)
+    private readonly collaboratorRepository: Repository<ResourceCollaboratorEntity>,
   ) {}
 
   async createDocument(data: {
@@ -37,10 +40,36 @@ export class DocumentsService {
   }
 
   async findByUserId(userId: string): Promise<Document[]> {
-    return this.documentRepository.find({
+    // Get documents owned by user
+    const ownedDocuments = await this.documentRepository.find({
       where: { userId },
       order: { createdAt: 'DESC' },
     });
+
+    // Get documents where user is an accepted collaborator
+    const collaborations = await this.collaboratorRepository.find({
+      where: { userId, status: 'accepted' },
+    });
+
+    const collaboratedDocumentIds = collaborations.map(c => c.resourceId);
+    
+    let collaboratedDocuments: DocumentEntity[] = [];
+    if (collaboratedDocumentIds.length > 0) {
+      collaboratedDocuments = await this.documentRepository.findByIds(collaboratedDocumentIds);
+    }
+
+    // Combine and deduplicate
+    const allDocuments = [...ownedDocuments];
+    collaboratedDocuments.forEach(doc => {
+      if (!allDocuments.find(d => d.id === doc.id)) {
+        allDocuments.push(doc);
+      }
+    });
+
+    // Sort by creation date
+    return allDocuments.sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   async findPendingDocuments(): Promise<Document[]> {

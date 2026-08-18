@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DocumentsService } from './documents.service';
 import { ExamPipelineService } from '../exam-pipeline/exam-pipeline.service';
 
-@Controller('exams')
+@Controller('documents/exams')
 @UseGuards(JwtAuthGuard)
 export class ExamsController {
   constructor(

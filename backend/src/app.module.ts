@@ -23,6 +23,8 @@ import { PurchasesModule } from './purchases/purchases.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { TemplatesModule } from './templates/templates.module';
 import { getTypeOrmConfig } from './config/typeorm.config';
+import { CollaborationModule } from './collaboration/collaboration.module';
+import { ExamsModule } from './exams/exams.module';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { getTypeOrmConfig } from './config/typeorm.config';
     PurchasesModule,
     ModerationModule,
     TemplatesModule,
+    CollaborationModule,
+    ExamsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

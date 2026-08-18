@@ -9,16 +9,21 @@ import {
   NotFoundException,
   Request,
   HttpException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { AiService } from './ai.service';
 import { ChatDto, SummarizeDto, TranslateDto, GenerateEmailDto } from './dto/chat.dto';
 import { GenerateQuestionsDto, GenerateQuestionsResponse } from './dto/generate-questions.dto';
+import { GenerateExamDto, GenerateExamResponse } from './dto/generate-exam.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DocumentsService } from '../documents/documents.service';
+import { CollaborationService } from '../collaboration/collaboration.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ExamQuestionEntity } from '../exam-pipeline/entities/exam-question.entity';
 import { EmbeddingService } from '../exam-pipeline/embedding.service';
+import { ResourceCollaboratorEntity } from '../collaboration/entities/resource-collaborator.entity';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
@@ -27,8 +32,12 @@ export class AiController {
     private readonly aiService: AiService,
     private readonly documentsService: DocumentsService,
     private readonly embeddingService: EmbeddingService,
+    @Inject(forwardRef(() => CollaborationService))
+    private readonly collaborationService: CollaborationService,
     @InjectRepository(ExamQuestionEntity)
     private readonly examQuestionRepo: Repository<ExamQuestionEntity>,
+    @InjectRepository(ResourceCollaboratorEntity)
+    private readonly collaboratorRepo: Repository<ResourceCollaboratorEntity>,
   ) {}
 
   @Post('chat')
@@ -154,6 +163,202 @@ export class AiController {
       generatedAt: new Date(),
       count: savedQuestions.length,
     };
+  }
+
+  @Post('generate-variations')
+  @HttpCode(HttpStatus.OK)
+  async generateVariations(
+    @Body() dto: any, // Will use proper DTO
+    @Request() req: any,
+  ) {
+    // Fetch original question
+    const question = await this.examQuestionRepo.findOne({
+      where: { id: dto.questionId },
+    });
+
+    if (!question) {
+      throw new NotFoundException('Question not found');
+    }
+
+    const variationTypes = dto.variationType === 'all'
+      ? ['easier', 'harder', 'scenario_based', 'mcq', 'true_false', 'short_answer']
+      : [dto.variationType];
+
+    const variations = await this.aiService.generateQuestionVariations(
+      question,
+      variationTypes,
+      dto.customInstructions,
+    );
+
+    // Optionally save variations to database
+    const savedVariations = await Promise.all(
+      variations.map(async (v: any) => {
+        const embeddingArray = await this.embeddingService.generateEmbedding(v.text);
+        const embeddingString = `[${embeddingArray.join(',')}]`;
+
+        const variationQuestion = this.examQuestionRepo.create({
+          questionText: v.text,
+          questionType: v.type,
+          options: v.options,
+          correctAnswer: v.correctAnswer,
+          difficulty: v.difficulty,
+          explanation: v.explanation,
+          topic: question.topic,
+          embedding: embeddingString,
+          documentId: question.documentId,
+        });
+
+        return this.examQuestionRepo.save(variationQuestion);
+      }),
+    );
+
+    return {
+      success: true,
+      variations: savedVariations,
+      originalQuestion: {
+        id: question.id,
+        text: question.questionText,
+        type: question.questionType,
+      },
+    };
+  }
+
+  @Post('improve-question')
+  @HttpCode(HttpStatus.OK)
+  async improveQuestion(
+    @Body() dto: any, // Will use proper DTO
+    @Request() req: any,
+  ) {
+    // Fetch question
+    const question = await this.examQuestionRepo.findOne({
+      where: { id: dto.questionId },
+    });
+
+    if (!question) {
+      throw new NotFoundException('Question not found');
+    }
+
+    const improvement = await this.aiService.improveQuestion(
+      question,
+      dto.improvementTypes,
+      dto.customInstructions,
+    );
+
+    return {
+      success: true,
+      questionId: question.id,
+      originalQuestion: {
+        text: question.questionText,
+        type: question.questionType,
+        options: question.options,
+      },
+      improvedQuestion: {
+        text: improvement.improvedText,
+        options: improvement.improvedOptions,
+      },
+      improvements: improvement.improvements,
+      summary: improvement.summary,
+    };
+  }
+
+  @Post('generate-rubric')
+  @HttpCode(HttpStatus.OK)
+  async generateRubric(
+    @Body() dto: any, // Will use proper DTO
+    @Request() req: any,
+  ) {
+    // Fetch question
+    const question = await this.examQuestionRepo.findOne({
+      where: { id: dto.questionId },
+    });
+
+    if (!question) {
+      throw new NotFoundException('Question not found');
+    }
+
+    const rubric = await this.aiService.generateRubric(
+      question,
+      dto.totalPoints || 10,
+      dto.criteria,
+      dto.customInstructions,
+    );
+
+    return {
+      success: true,
+      questionId: question.id,
+      questionText: question.text,
+      totalPoints: dto.totalPoints || 10,
+      criteria: rubric.criteria,
+      generatedAt: new Date(),
+    };
+  }
+
+  @Post('chat-with-document')
+  @HttpCode(HttpStatus.OK)
+  async chatWithDocument(
+    @Body() dto: any, // Will use proper DTO
+    @Request() req: any,
+  ) {
+    // Fetch document
+    const document = await this.documentsService.findById(dto.documentId);
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    // Check ownership or collaboration access
+    // Allow if: user is owner, user is admin, or user is a collaborator
+    const isOwner = document.userId === req.user.sub;
+    const isAdmin = req.user.role === 'admin';
+    
+    // Check if user is a collaborator with accepted status
+    let isCollaborator = false;
+    if (!isOwner && !isAdmin) {
+      const collaborator = await this.collaboratorRepo.findOne({
+        where: { 
+          resourceId: dto.documentId, 
+          userId: req.user.sub,
+          status: 'accepted' // Only accepted collaborators have access
+        },
+      });
+      isCollaborator = !!collaborator;
+    }
+    
+    if (!isOwner && !isAdmin && !isCollaborator) {
+      throw new NotFoundException('Document not found');
+    }
+
+    // Fetch OCR text
+    if (!document.ocrResultUrl) {
+      throw new HttpException(
+        'Document has not been processed yet',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const ocrText = await this.fetchOcrText(document.ocrResultUrl);
+
+    const chatResponse = await this.aiService.chatWithDocument(
+      ocrText,
+      dto.message,
+      dto.conversationHistory,
+    );
+    return {
+      success: true,
+      response: chatResponse.response,
+      suggestedFollowUps: chatResponse.suggestedFollowUps,
+      documentId: document.id,
+      documentTitle: document.title || document.originalName,
+      timestamp: new Date(),
+    };
+  }
+
+  @Post('generate-exam')
+  @HttpCode(HttpStatus.OK)
+  async generateExam(
+    @Body() dto: GenerateExamDto,
+    @Request() req: any,
+  ) {
+    return await this.aiService.generateCompleteExam(dto, req.user.sub);
   }
 
   private async fetchOcrText(ocrResultUrl: string): Promise<string> {

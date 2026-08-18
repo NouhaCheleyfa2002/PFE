@@ -1,11 +1,14 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { FileText, Eye, Trash2, Star, Upload, Download, Search, Filter, X, ChevronDown, BookOpen, FileCheck, BadgeCheck, Bookmark, DollarSign, Clock, Zap, Edit } from "lucide-react";
+import React, { useState, useEffect, Suspense } from "react";
+import { FileText, Eye, Trash2, Star, Upload, Download, Search, Filter, X, ChevronDown, BookOpen, FileCheck, BadgeCheck, Bookmark, DollarSign, Clock, Zap, Edit, Users } from "lucide-react";
 import { UniversalDocumentPreview } from "@/components/preview/UniversalDocumentPreview";
 import { EDUCATION_LEVELS } from "@/lib/education-config";
 import { authService } from "@/lib/auth";
 import { useBookmarks } from "@/lib/use-bookmarks";
+import { CollaboratorManager, ActivityFeed } from "@/components/collaboration";
+import { useSearchParams } from "next/navigation";
+import DocumentChatPanel from "@/components/ai/DocumentChatPanel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -165,8 +168,9 @@ function EditMetadataModal({ resource, onClose, onSave }: { resource: DatabaseRe
   );
 }
 
-export default function ResourcesPage() {
+function ResourcesPageContent() {
   const { fetchBookmarks, toggleBookmark } = useBookmarks();
+  const searchParams = useSearchParams();
   const [resources, setResources] = useState<DatabaseResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [previewDoc, setPreviewDoc] = useState<DatabaseResource | null>(null);
@@ -174,6 +178,12 @@ export default function ResourcesPage() {
   const [mainTab, setMainTab] = useState<MainTab>("uploads");
   const [bookmarkedResources, setBookmarkedResources] = useState<any[]>([]);
   const [editingResource, setEditingResource] = useState<DatabaseResource | null>(null);
+  const [chatDocument, setChatDocument] = useState<DatabaseResource | null>(null);
+  const [collaboratingResource, setCollaboratingResource] = useState<DatabaseResource | null>(null);
+  
+  // Collaborators state
+  const [collaboratorsMap, setCollaboratorsMap] = useState<Record<string, any[]>>({});
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   
   // Filtering states
   const [activeTab, setActiveTab] = useState<ResourceTab>("courses");
@@ -191,6 +201,16 @@ export default function ResourcesPage() {
       loadBookmarks();
     }
   }, [mainTab]);
+
+  // Check for highlight param on mount
+  useEffect(() => {
+    const highlight = searchParams.get('highlight');
+    if (highlight) {
+      setHighlightedId(highlight);
+      // Remove highlight after 3 seconds
+      setTimeout(() => setHighlightedId(null), 3000);
+    }
+  }, [searchParams]);
 
   const fetchMyResources = async () => {
     const token = authService.getToken();
@@ -214,12 +234,44 @@ export default function ResourcesPage() {
           console.log('First document:', data.documents[0]);
         }
         setResources(data.documents || []);
+        
+        // Fetch collaborators for each resource
+        if (data.documents && data.documents.length > 0) {
+          fetchAllCollaborators(data.documents.map((d: DatabaseResource) => d.id));
+        }
       }
     } catch (error) {
       console.error("Failed to fetch resources:", error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchAllCollaborators = async (resourceIds: string[]) => {
+    const token = authService.getToken();
+    if (!token) return;
+
+    const collabMap: Record<string, any[]> = {};
+    
+    await Promise.all(
+      resourceIds.map(async (resourceId) => {
+        try {
+          const response = await fetch(`${API_URL}/collaboration/resources/${resourceId}/collaborators`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          
+          if (response.ok) {
+            const collaborators = await response.json();
+            // Only include accepted collaborators
+            collabMap[resourceId] = collaborators.filter((c: any) => c.status === 'accepted');
+          }
+        } catch (error) {
+          console.error(`Failed to fetch collaborators for ${resourceId}:`, error);
+        }
+      })
+    );
+
+    setCollaboratorsMap(collabMap);
   };
 
   const loadBookmarks = async () => {
@@ -760,10 +812,18 @@ export default function ResourcesPage() {
             </div>
           ) : (
             <div className="grid gap-4">
-              {filtered.map((r: DatabaseResource) => (
+              {filtered.map((r: DatabaseResource) => {
+                const collaborators = collaboratorsMap[r.id] || [];
+                const isHighlighted = highlightedId === r.id;
+                
+                return (
                 <div
                   key={r.id}
-                  className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-md hover:border-[#63b3ed]/30 transition-all"
+                  className={`bg-white rounded-xl border p-5 hover:shadow-md transition-all ${
+                    isHighlighted 
+                      ? 'border-[#63b3ed] shadow-lg ring-2 ring-[#63b3ed]/20 animate-pulse' 
+                      : 'border-[#edf0f7] hover:border-[#63b3ed]/30'
+                  }`}
                 >
                   <div className="flex items-start gap-4">
                     <div className="w-14 h-14 rounded-lg bg-[#f6f8ff] flex items-center justify-center text-[#63b3ed] shrink-0">
@@ -778,6 +838,14 @@ export default function ResourcesPage() {
                               You
                               <BadgeCheck className="w-4 h-4 text-green-500" />
                             </span>
+                            {collaborators.length > 0 && (
+                              <>
+                                <span>•</span>
+                                <span className="flex items-center gap-1">
+                                  Co-authored with {collaborators.length} {collaborators.length === 1 ? 'other' : 'others'}
+                                </span>
+                              </>
+                            )}
                             <span>•</span>
                             <span>{r.subject || 'No Subject'}</span>
                             <span>•</span>
@@ -785,6 +853,36 @@ export default function ResourcesPage() {
                             <span>•</span>
                             <span>{formatDate(r.createdAt)}</span>
                           </div>
+                          
+                          {/* Collaborator Avatars */}
+                          {collaborators.length > 0 && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <div className="flex -space-x-2">
+                                {collaborators.slice(0, 3).map((collab: any) => (
+                                  <div
+                                    key={collab.id}
+                                    className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 border-2 border-white flex items-center justify-center shadow-sm"
+                                    title={collab.userName || 'Collaborator'}
+                                  >
+                                    <span className="text-[10px] font-bold text-white">
+                                      {(collab.userName || '?').charAt(0).toUpperCase()}
+                                    </span>
+                                  </div>
+                                ))}
+                                {collaborators.length > 3 && (
+                                  <div className="w-7 h-7 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center shadow-sm">
+                                    <span className="text-[9px] font-bold text-gray-600">
+                                      +{collaborators.length - 3}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-xs text-[#8899bb]">
+                                {collaborators.slice(0, 2).map((c: any) => c.userName).join(', ')}
+                                {collaborators.length > 2 && ` and ${collaborators.length - 2} more`}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           {getVerificationBadge(r.verificationStatus, r.processedAt, r.createdAt)}
@@ -808,12 +906,30 @@ export default function ResourcesPage() {
                             Edit
                           </button>
                           <button
+                            onClick={() => setCollaboratingResource(r)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#edf0f7] text-[#4a5568] text-xs font-medium hover:border-[#63b3ed] hover:text-[#63b3ed] hover:bg-[#f6f8ff] transition-colors"
+                            title="Collaborators"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            Collaborate
+                          </button>
+                          <button
                             onClick={() => handlePreview(r)}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#63b3ed] text-white text-xs font-medium hover:bg-[#4299e1] transition-colors"
                             title="Preview"
                           >
                             <Eye className="w-3.5 h-3.5" />
                             View
+                          </button>
+                          <button
+                            onClick={() => setChatDocument(r)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white text-xs font-medium hover:from-purple-600 hover:to-blue-600 transition-colors"
+                            title="Chat with AI about this document"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                            </svg>
+                            AI
                           </button>
                           <button
                             onClick={() => handleDownload(r)}
@@ -902,7 +1018,8 @@ export default function ResourcesPage() {
                     </div>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </>
@@ -936,6 +1053,33 @@ export default function ResourcesPage() {
         />
       )}
 
+      {/* Collaboration Modal */}
+      {collaboratingResource && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-[#0d1b3e]">Manage Collaborators</h2>
+              <button onClick={() => setCollaboratingResource(null)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <CollaboratorManager
+                resourceId={collaboratingResource.id}
+                resourceType="document"
+                isOwner={true}
+              />
+              
+              <ActivityFeed
+                resourceId={collaboratingResource.id}
+                resourceType="document"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Document Preview Modal */}
       {previewDoc && (
         <UniversalDocumentPreview
@@ -944,6 +1088,28 @@ export default function ResourcesPage() {
           onClose={() => setPreviewDoc(null)}
         />
       )}
+      
+      {/* AI Document Chat */}
+      {chatDocument && (
+        <DocumentChatPanel
+          documentId={chatDocument.id}
+          documentTitle={chatDocument.title}
+          isOpen={!!chatDocument}
+          onClose={() => setChatDocument(null)}
+        />
+      )}
     </div>
+  );
+}
+
+export default function ResourcesPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#63b3ed]"></div>
+      </div>
+    }>
+      <ResourcesPageContent />
+    </Suspense>
   );
 }

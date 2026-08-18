@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, Get, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, Get, UseGuards, Request, Query } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto, ChangePasswordDto } from './dto/auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -34,5 +34,11 @@ export class AuthController {
       changePasswordDto.newPassword,
     );
     return { message: 'Password changed successfully' };
+  }
+
+  @Get('users/search')
+  @UseGuards(JwtAuthGuard)
+  async searchUsers(@Query('query') query: string) {
+    return this.authService.searchVerifiedTeachers(query);
   }
 }

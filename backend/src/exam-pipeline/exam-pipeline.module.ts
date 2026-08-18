@@ -22,7 +22,7 @@ import { DocumentsModule } from '../documents/documents.module';
   imports: [
     TypeOrmModule.forFeature([ExamQuestionEntity, SearchHistoryEntity, DocumentEntity]),
     ConfigModule,
-    AiModule,
+    forwardRef(() => AiModule), // Use forwardRef to resolve circular dependency
     forwardRef(() => DocumentsModule),
   ],
   controllers: [ExamPipelineController],

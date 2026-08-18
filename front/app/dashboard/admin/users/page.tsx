@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useEffect, useState, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Users as UsersIcon,
   Search,
@@ -111,6 +111,10 @@ function StatusBadge({ user }: { user: User }) {
 
 export default function AdminUsersPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const highlightUserId = searchParams.get('userId');
+  const userRefs = useRef<{ [key: string]: HTMLTableRowElement | null }>({});
+  
   const [users, setUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,6 +161,18 @@ export default function AdminUsersPage() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  // Scroll to and highlight user from URL parameter
+  useEffect(() => {
+    if (highlightUserId && userRefs.current[highlightUserId]) {
+      setTimeout(() => {
+        userRefs.current[highlightUserId]?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      }, 500); // Wait for data to load
+    }
+  }, [highlightUserId, filteredUsers]);
 
   useEffect(() => {
     let filtered = users;
@@ -400,8 +416,16 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#f0f4f8]">
-              {filteredUsers.map((user) => (
-                <tr key={user.id} className="hover:bg-[#f8fafc] transition-colors">
+              {filteredUsers.map((user) => {
+                const isHighlighted = user.id === highlightUserId;
+                return (
+                <tr 
+                  key={user.id} 
+                  ref={(el) => { userRefs.current[user.id] = el; }}
+                  className={`hover:bg-[#f8fafc] transition-all ${
+                    isHighlighted ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''
+                  }`}
+                >
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#63b3ed] to-[#a78bfa] flex items-center justify-center text-white text-sm font-bold">
@@ -518,7 +542,8 @@ export default function AdminUsersPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

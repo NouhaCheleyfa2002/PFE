@@ -20,6 +20,7 @@ import {
   LogOut,
   FileText,
   MessageSquare,
+  Mail,
 } from "lucide-react";
 import { authService, User } from "@/lib/auth";
 
@@ -31,6 +32,7 @@ const TEACHER_NAV = [
       { label: "Dashboard",    href: "/dashboard",              icon: LayoutDashboard },
       { label: "Library",      href: "/dashboard/library",      icon: BookOpen },
       { label: "My Resources", href: "/dashboard/resources",    icon: Folder },
+      { label: "Invitations",  href: "/dashboard/invitations",  icon: Mail },
     ],
   },
   {
@@ -38,7 +40,6 @@ const TEACHER_NAV = [
     items: [
       { label: "Upload Resource", href: "/dashboard/upload",       icon: Upload },
       { label: "Exam Builder",  href: "/dashboard/exam-builder", icon: FileEdit },
-      { label: "AI Generator",  href: "/dashboard/ai-generator", icon: Sparkles },
     ],
   },
   {

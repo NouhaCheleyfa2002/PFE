@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";
-import { ArrowLeft, BookOpen, GraduationCap, FlaskConical, Globe, Calculator, Code, Palette, TrendingUp, FileText, Filter, Edit2, Trash2, Save, X as XIcon, Image as ImageIcon, BarChart2, Table as TableIcon, Scissors } from "lucide-react";
+import { ArrowLeft, BookOpen, GraduationCap, FlaskConical, Globe, Calculator, Code, Palette, TrendingUp, FileText, Filter, Edit2, Trash2, Save, X as XIcon, Image as ImageIcon, BarChart2, Table as TableIcon, Scissors, Sparkles } from "lucide-react";
 import { authService } from "@/lib/auth";
 import { EDUCATION_LEVELS, EducationLevel, getSubjectsForLevel } from "@/lib/education-config";
 import VisualContentViewer from "@/components/VisualContentViewer";
 import ManualDiagramSelector from "@/components/ManualDiagramSelector";
+import { QuestionVariationPanel, QuestionImprovementModal } from "@/components/ai";
+import { toast } from 'react-hot-toast';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -214,6 +216,35 @@ export default function QuestionsPage() {
   const [loadingVisualContent, setLoadingVisualContent] = useState<Set<string>>(new Set());
   const [expandedVisualContent, setExpandedVisualContent] = useState<Set<string>>(new Set());
   const [manualSelectorOpen, setManualSelectorOpen] = useState<string | null>(null);
+  const [improveModalQuestionId, setImproveModalQuestionId] = useState<string | null>(null);
+
+  // Get the question for improvement modal - must be at top level (Rules of Hooks)
+  const improveQuestion = useMemo(() => {
+    if (!improveModalQuestionId) return null;
+    const found = extractedQuestions.find(q => q.id === improveModalQuestionId);
+    if (!found) {
+      console.warn('[QuestionImprovement] Question not found in extractedQuestions:', improveModalQuestionId);
+      console.log('[QuestionImprovement] Available question IDs:', extractedQuestions.map(q => q.id).slice(0, 5));
+    } else {
+      console.log('[QuestionImprovement] Question found:', {
+        id: found.id,
+        text: found.text?.substring(0, 50),
+        questionType: found.questionType
+      });
+    }
+    return found || null;
+  }, [improveModalQuestionId, extractedQuestions]);
+
+  // Debug effect to track state changes
+  useEffect(() => {
+    if (improveModalQuestionId) {
+      console.log('[QuestionImprovement] State updated - improveModalQuestionId:', improveModalQuestionId);
+      console.log('[QuestionImprovement] State updated - improveQuestion:', improveQuestion ? {
+        id: improveQuestion.id,
+        text: improveQuestion.text?.substring(0, 50)
+      } : 'NULL');
+    }
+  }, [improveModalQuestionId, improveQuestion]);
 
   // Parse visualContentRef JSON to get pre-extracted diagrams or diagram metadata
   const parseVisualContentRef = (visualContentRef: string, documentUrl?: string) => {
@@ -735,6 +766,66 @@ export default function QuestionsPage() {
         {/* Render modal */}
         {renderManualSelectorModal()}
         
+        {/* AI Question Improvement Modal - Must be in selectedSubject render too! */}
+        <QuestionImprovementModal
+          isOpen={!!improveModalQuestionId && !!improveQuestion}
+          onClose={() => {
+            console.log('[QuestionImprovement] Modal closing');
+            setImproveModalQuestionId(null);
+          }}
+          questionId={improveQuestion?.id || ''}
+          questionText={improveQuestion?.text || ''}
+          questionType={improveQuestion?.questionType || 'open'}
+          options={improveQuestion?.options}
+          onApplyImprovement={async (improvedText, improvedOptions) => {
+            if (!improveQuestion) {
+              console.error('[QuestionImprovement] No question to improve');
+              return;
+            }
+
+            const token = authService.getToken();
+            if (!token) {
+              toast.error('Not authenticated');
+              return;
+            }
+
+            console.log('[QuestionImprovement] Applying improvements to question:', improveQuestion.id);
+
+            try {
+              const response = await fetch(`${API_URL}/exam-questions/${improveQuestion.id}`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  questionText: improvedText,
+                  options: improvedOptions || improveQuestion.options,
+                }),
+              });
+
+              if (response.ok) {
+                setExtractedQuestions(prev =>
+                  prev.map(q => q.id === improveQuestion.id ? {
+                    ...q,
+                    text: improvedText,
+                    options: improvedOptions || q.options,
+                  } : q)
+                );
+                toast.success('Question improved and saved!');
+                setImproveModalQuestionId(null);
+              } else {
+                const error = await response.json();
+                console.error('[QuestionImprovement] Failed to save:', error);
+                toast.error(`Failed to save: ${error.message || 'Unknown error'}`);
+              }
+            } catch (error) {
+              console.error('[QuestionImprovement] Failed to save improved question:', error);
+              toast.error('Failed to save improved question');
+            }
+          }}
+        />
+        
         <div>
           {/* Header */}
           <div className="mb-6">
@@ -1110,6 +1201,28 @@ export default function QuestionsPage() {
                   {/* Action buttons */}
                   {editingQuestion !== q.id && (
                     <div className="flex items-center gap-2">
+                      {/* AI Features - Variation & Improvement */}
+                      <QuestionVariationPanel
+                        questionId={q.id}
+                        questionText={q.text}
+                        onVariationCreated={(variation) => {
+                          console.log('Variation created:', variation);
+                          toast.success('Variation saved to database!');
+                        }}
+                      />
+                      
+                      <button
+                        onClick={() => {
+                          console.log('[QuestionImprovement] Button clicked for question:', q.id);
+                          console.log('[QuestionImprovement] Question text:', q.text);
+                          setImproveModalQuestionId(q.id);
+                        }}
+                        className="p-2 text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-all flex items-center gap-1"
+                        title="AI Improve Question"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                      </button>
+                      
                       <button
                         onClick={() => handleEditQuestion(q)}
                         className="p-2 text-[#8899bb] hover:text-[#63b3ed] hover:bg-[#f6f8ff] rounded-lg transition-all"
@@ -1146,6 +1259,79 @@ export default function QuestionsPage() {
     <>
       {/* Render modal */}
       {renderManualSelectorModal()}
+      
+      {/* Debug: Log modal state */}
+      {improveModalQuestionId && console.log('[QuestionImprovement] Modal state:', {
+        improveModalQuestionId,
+        improveQuestion: improveQuestion ? {
+          id: improveQuestion.id,
+          text: improveQuestion.text?.substring(0, 50),
+          hasText: !!improveQuestion.text
+        } : null,
+        isOpen: !!improveModalQuestionId && !!improveQuestion
+      })}
+      
+      {/* AI Question Improvement Modal - Always render, controlled by isOpen */}
+      <QuestionImprovementModal
+        isOpen={!!improveModalQuestionId && !!improveQuestion}
+        onClose={() => {
+          console.log('[QuestionImprovement] Modal closing');
+          setImproveModalQuestionId(null);
+        }}
+        questionId={improveQuestion?.id || ''}
+        questionText={improveQuestion?.text || ''}
+        questionType={improveQuestion?.questionType || 'open'}
+        options={improveQuestion?.options}
+        onApplyImprovement={async (improvedText, improvedOptions) => {
+          if (!improveQuestion) {
+            console.error('[QuestionImprovement] No question to improve');
+            return;
+          }
+
+          // Update question in database
+          const token = authService.getToken();
+          if (!token) {
+            toast.error('Not authenticated');
+            return;
+          }
+
+          console.log('[QuestionImprovement] Applying improvements to question:', improveQuestion.id);
+
+          try {
+            const response = await fetch(`${API_URL}/exam-questions/${improveQuestion.id}`, {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                questionText: improvedText,
+                options: improvedOptions || improveQuestion.options,
+              }),
+            });
+
+            if (response.ok) {
+              // Update local state
+              setExtractedQuestions(prev =>
+                prev.map(q => q.id === improveQuestion.id ? {
+                  ...q,
+                  text: improvedText,
+                  options: improvedOptions || q.options,
+                } : q)
+              );
+              toast.success('Question improved and saved!');
+              setImproveModalQuestionId(null); // Close modal
+            } else {
+              const error = await response.json();
+              console.error('[QuestionImprovement] Failed to save:', error);
+              toast.error(`Failed to save: ${error.message || 'Unknown error'}`);
+            }
+          } catch (error) {
+            console.error('[QuestionImprovement] Failed to save improved question:', error);
+            toast.error('Failed to save improved question');
+          }
+        }}
+      />
       
       <div>
       <div className="mb-6">

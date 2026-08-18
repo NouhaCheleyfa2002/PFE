@@ -28,6 +28,9 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import QuestionCreator from "./QuestionCreator";
+import { CollaborativeQuestion } from "@/components/collaboration";
+import { useWebSocket } from "@/lib/websocket-context";
+import RubricGeneratorModal from "@/components/ai/RubricGeneratorModal";
 
 /* ─── Resizable, alignable image with caption ─────────────────────────────── */
 
@@ -791,6 +794,7 @@ function SortableQuestionBlock({
   onUpdate,
   exam,
   totalPoints,
+  examId,
 }: {
   q: Question;
   index: number;
@@ -802,8 +806,12 @@ function SortableQuestionBlock({
   onUpdate: (id: string, updates: Partial<Question>) => void;
   exam: any;
   totalPoints: number;
+  examId?: string;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [showRubricGenerator, setShowRubricGenerator] = useState(false);
+  const collaborativeQuestionRef = useRef<{ startEditing: () => void; stopEditing: () => void } | null>(null);
+  const { socket, savedQuestion } = useWebSocket();
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: q.id,
@@ -819,13 +827,122 @@ function SortableQuestionBlock({
     pageBreakInside: "avoid",
   };
 
+  // Listen for question:saved broadcasts from other users
+  useEffect(() => {
+    if (!socket || !examId) return;
+
+    const handleQuestionSaved = (data: any) => {
+      console.log('[ExamPreview] Received question:saved event:', data);
+      
+      // Update the question metadata when someone saves it
+      if (data.questionId === q.id) {
+        onUpdate(q.id, {
+          lastModifiedBy: data.userName,
+          lastModifiedAt: new Date().toISOString(),
+        });
+      }
+    };
+
+    socket.on('question:saved', handleQuestionSaved);
+
+    return () => {
+      socket.off('question:saved', handleQuestionSaved);
+    };
+  }, [socket, examId, q.id, onUpdate]);
+
+  const handleStartEditing = () => {
+    setIsEditing(true);
+    
+    // Emit WebSocket event that user is now editing
+    if (collaborativeQuestionRef.current) {
+      collaborativeQuestionRef.current.startEditing();
+    }
+  };
+
   const handleSave = (updates: Partial<Question>) => {
-    onUpdate(q.id, updates);
+    // Get current user name
+    const token = localStorage.getItem('auth_token');
+    let userName = 'Unknown';
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        userName = payload.fullName || payload.name || payload.username || 'Unknown';
+      } catch (err) {
+        console.error('Failed to parse token:', err);
+      }
+    }
+
+    // Add modification metadata to the question
+    const updatesWithMetadata = {
+      ...updates,
+      lastModifiedBy: userName,
+      lastModifiedAt: new Date().toISOString(),
+    };
+
+    onUpdate(q.id, updatesWithMetadata);
     setIsEditing(false);
+    
+    // Stop editing signal
+    if (collaborativeQuestionRef.current) {
+      collaborativeQuestionRef.current.stopEditing();
+    }
+    
+    // Broadcast that question was saved (this will trigger the event for ALL users)
+    if (examId) {
+      savedQuestion(examId, q.id, index);
+    }
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    
+    // Stop editing signal
+    if (collaborativeQuestionRef.current) {
+      collaborativeQuestionRef.current.stopEditing();
+    }
+  };
+
+  // Empty handlers for CollaborativeQuestion (we don't need them)
+  const handleFocus = () => {
+    // No-op: We control editing via Edit button, not focus
+  };
+
+  const handleBlur = () => {
+    // No-op: We control editing via Edit button, not blur
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="group">
+    <CollaborativeQuestion
+      examId={examId || exam.id || ''}
+      questionIndex={index}
+      questionId={q.id}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      onEditingChange={(ref) => {
+        collaborativeQuestionRef.current = ref;
+      }}
+    >
+      <div ref={setNodeRef} style={style} className="group">
+      {/* Permanent "Last edited by" badge */}
+      {isEditorMode && q.lastModifiedBy && (
+        <div
+          className="absolute -top-8 left-0 bg-blue-50 text-blue-700 text-xs px-3 py-1 rounded-full border border-blue-200 shadow-sm z-20"
+          title={`Last modified: ${q.lastModifiedAt ? new Date(q.lastModifiedAt).toLocaleString() : 'Unknown'}`}
+        >
+          ✓ Edited by {q.lastModifiedBy}
+        </div>
+      )}
+      
+      {/* "Created by" badge if it's a new question */}
+      {isEditorMode && q.createdBy && !q.lastModifiedBy && (
+        <div
+          className="absolute -top-8 left-0 bg-green-50 text-green-700 text-xs px-3 py-1 rounded-full border border-green-200 shadow-sm z-20"
+          title={`Created: ${q.createdAt ? new Date(q.createdAt).toLocaleString() : 'Unknown'}`}
+        >
+          {q.id.includes('_dup_') ? '📋' : '➕'} {q.id.includes('_dup_') ? 'Duplicated' : 'Added'} by {q.createdBy}
+        </div>
+      )}
+      
       {/* Editor controls — ignored by html2canvas via attribute */}
       {isEditorMode && !isEditing && (
         <div
@@ -846,7 +963,29 @@ function SortableQuestionBlock({
               <AlertCircle style={{ width: 14, height: 14 }} />
             </span>
           )}
-          <button onClick={() => setIsEditing(true)} style={ctrlBtn} title="Edit question">
+          {/* Generate Rubric button for essay/open questions */}
+          {q.type === "open" && (
+            <button 
+              onClick={() => setShowRubricGenerator(true)} 
+              style={{
+                ...ctrlBtn,
+                background: "linear-gradient(135deg, #10b981 0%, #14b8a6 100%)",
+                color: "#fff",
+                border: "none",
+                width: "auto",
+                paddingLeft: 8,
+                paddingRight: 8,
+                gap: 4,
+              }}
+              title="Generate AI Rubric"
+            >
+              <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Rubric</span>
+            </button>
+          )}
+          <button onClick={handleStartEditing} style={ctrlBtn} title="Edit question">
             <Pencil style={{ width: 11, height: 11 }} />
           </button>
           <button
@@ -893,7 +1032,7 @@ function SortableQuestionBlock({
         <QuestionEditorForm
           q={q}
           onSave={handleSave}
-          onCancel={() => setIsEditing(false)}
+          onCancel={handleCancel}
           exam={exam}
           totalPoints={totalPoints}
         />
@@ -962,7 +1101,23 @@ function SortableQuestionBlock({
 
         </>
       )}
+      
+      {/* Rubric Generator Modal */}
+      {showRubricGenerator && q.type === "open" && (
+        <RubricGeneratorModal
+          isOpen={showRubricGenerator}
+          onClose={() => setShowRubricGenerator(false)}
+          questionId={q.id}
+          questionText={q.text}
+          onRubricGenerated={(rubric) => {
+            console.log('Generated rubric:', rubric);
+            // Optionally store the rubric with the question
+            onUpdate(q.id, { rubric: rubric as any });
+          }}
+        />
+      )}
     </div>
+    </CollaborativeQuestion>
   );
 }
 
@@ -983,9 +1138,10 @@ const PAGE_STYLE: React.CSSProperties = {
 
 interface ExamPreviewProps {
   importedTemplate?: any;
+  examId?: string;
 }
 
-const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPreview({ importedTemplate }, ref) {
+const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPreview({ importedTemplate, examId }, ref) {
   const {
     exam,
     setTitle,
@@ -1516,6 +1672,7 @@ const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPr
                     onUpdate={updateQuestion}
                     exam={exam}
                     totalPoints={totalPoints}
+                    examId={examId}
                   />
                 ))}
               </SortableContext>

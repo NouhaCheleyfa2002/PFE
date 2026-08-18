@@ -16,28 +16,33 @@ export class UserNotificationsController {
 
   @Get()
   async getNotifications(@Request() req: any) {
-    return this.notificationsService.findByUserId(req.user.userId);
+    const userId = req.user.sub || req.user.userId;
+    return this.notificationsService.findByUserId(userId);
   }
 
   @Get('unread')
   async getUnreadNotifications(@Request() req: any) {
-    return this.notificationsService.findUnreadByUserId(req.user.userId);
+    const userId = req.user.sub || req.user.userId;
+    return this.notificationsService.findUnreadByUserId(userId);
   }
 
   @Get('unread/count')
   async getUnreadCount(@Request() req: any) {
-    const count = await this.notificationsService.getUnreadCount(req.user.userId);
+    const userId = req.user.sub || req.user.userId;
+    const count = await this.notificationsService.getUnreadCount(userId);
     return { count };
   }
 
   @Patch(':id/read')
   async markAsRead(@Param('id') id: string, @Request() req: any) {
-    return this.notificationsService.markAsRead(id, req.user.userId);
+    const userId = req.user.sub || req.user.userId;
+    return this.notificationsService.markAsRead(id, userId);
   }
 
   @Patch('mark-all-read')
   async markAllAsRead(@Request() req: any) {
-    await this.notificationsService.markAllAsRead(req.user.userId);
+    const userId = req.user.sub || req.user.userId;
+    await this.notificationsService.markAllAsRead(userId);
     return { message: 'All notifications marked as read' };
   }
 
@@ -64,5 +69,11 @@ export class UserNotificationsController {
       message: 'Announcement broadcasted successfully',
     };
   }
-}
 
+  @Post(':id')
+  async deleteNotification(@Param('id') id: string, @Request() req: any) {
+    const userId = req.user.sub || req.user.userId;
+    await this.notificationsService.deleteNotification(id, userId);
+    return { message: 'Notification deleted successfully' };
+  }
+}

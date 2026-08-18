@@ -256,10 +256,18 @@ export function ResourceDetailModal({ resource, isOpen, onClose }: ResourceDetai
         await fetchRatingData();
         setShowRatingModal(false);
       } else {
-        const error = await res.json();
-        console.error("Rating submission failed:", error);
-        alert(error.message || "Failed to submit rating. Please try again.");
-        throw new Error(error.message || "Failed to submit rating");
+        let errorMessage = "Failed to submit rating. Please try again.";
+        try {
+          const error = await res.json();
+          console.error("Rating submission failed:", error);
+          errorMessage = error.message || errorMessage;
+        } catch (parseError) {
+          // If response isn't JSON, use status text
+          errorMessage = `HTTP ${res.status}: ${res.statusText}`;
+          console.error("Rating submission failed with non-JSON response:", res.status, res.statusText);
+        }
+        alert(errorMessage);
+        throw new Error(errorMessage);
       }
     } catch (error) {
       console.error("Failed to submit rating:", error);

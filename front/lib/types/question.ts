@@ -34,4 +34,9 @@ export interface Question {
   imageCaption?: string;
   matchPairs?: MatchPair[];
   lines?: number;
+  // Collaboration metadata
+  lastModifiedBy?: string;
+  lastModifiedAt?: Date | string;
+  createdBy?: string;
+  createdAt?: Date | string;
 }
