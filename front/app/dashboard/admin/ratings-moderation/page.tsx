@@ -31,6 +31,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { authService } from "@/lib/auth";
+import toast from "react-hot-toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -262,7 +263,13 @@ export default function RatingsModerationPage() {
       });
 
       if (response.ok) {
-        alert("Action completed successfully!");
+        if (modalAction === 'approve') {
+          toast.success('✅ Rating approved and published!');
+        } else if (modalAction === 'reject') {
+          toast.success('🚫 Rating rejected and removed');
+        } else if (modalAction === 'hide') {
+          toast.success('👁️ Rating hidden from public view');
+        }
         setShowActionModal(false);
         setShowDetailDrawer(false);
         setModalReason("");
@@ -270,7 +277,7 @@ export default function RatingsModerationPage() {
         setModalAction(null);
         fetchData();
       } else {
-        alert("Action failed!");
+        toast.error("❌ Action failed. Please try again.");
       }
     } catch (error) {
       console.error("Action failed:", error);

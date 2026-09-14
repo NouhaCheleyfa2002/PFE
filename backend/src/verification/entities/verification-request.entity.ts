@@ -66,6 +66,9 @@ export class VerificationRequestEntity {
   @Column({ type: 'varchar', length: 50, nullable: true })
   verificationCode: string | null;
 
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'id_number' })
+  idNumber: string | null;
+
   // Status
   @Column({
     type: 'enum',
@@ -91,6 +94,34 @@ export class VerificationRequestEntity {
 
   @Column({ type: 'text', nullable: true })
   rejectionReason: string | null;
+
+  // AI Verification Fields
+  @Column({ type: 'jsonb', nullable: true, name: 'ai_extracted_data' })
+  aiExtractedData: any | null;
+
+  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true, name: 'ai_verification_score' })
+  aiVerificationScore: number | null;
+
+  @Column({ type: 'varchar', length: 50, default: 'pending', name: 'ai_status' })
+  aiStatus: string;
+
+  @Column({ type: 'varchar', length: 20, default: 'unknown', name: 'ai_risk_level' })
+  aiRiskLevel: string;
+
+  @Column({ type: 'jsonb', default: () => "'[]'", name: 'ai_flags' })
+  aiFlags: string[];
+
+  @Column({ type: 'jsonb', nullable: true, name: 'duplicate_check_result' })
+  duplicateCheckResult: any | null;
+
+  @Column({ type: 'jsonb', default: () => "'[]'", name: 'similarity_matches' })
+  similarityMatches: any[];
+
+  @Column({ type: 'timestamp', nullable: true, name: 'ai_processed_at' })
+  aiProcessedAt: Date | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, name: 'professional_id' })
+  professionalId: string | null;
 
   @CreateDateColumn()
   submittedAt: Date;

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { RatingsController } from './ratings.controller';
+import { RatingsController, ExamRatingsController } from './ratings.controller';
 import { RatingsService } from './ratings.service';
 import { 
   ResourceRating, 
@@ -11,6 +11,7 @@ import {
 } from './entities/rating.entity';
 import { DocumentsModule } from '../documents/documents.module';
 import { UserNotificationsModule } from '../user-notifications/user-notifications.module';
+import { ExamEntity } from '../exams/entities/exam.entity';
 
 @Module({
   imports: [
@@ -20,11 +21,12 @@ import { UserNotificationsModule } from '../user-notifications/user-notification
       ResourceBookmark,
       ResourceDownload,
       TeacherFollow,
+      ExamEntity,
     ]),
     DocumentsModule,
     UserNotificationsModule,
   ],
-  controllers: [RatingsController],
+  controllers: [RatingsController, ExamRatingsController],
   providers: [RatingsService],
   exports: [RatingsService],
 })

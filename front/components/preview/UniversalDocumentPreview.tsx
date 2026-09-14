@@ -10,6 +10,12 @@ interface UniversalDocumentPreviewProps {
 }
 
 export function UniversalDocumentPreview({ fileUrl, fileName, onClose }: UniversalDocumentPreviewProps) {
+  // Safety check - don't render if no valid URL
+  if (!fileUrl || fileUrl.trim() === '') {
+    console.error('[UniversalDocumentPreview] Invalid fileUrl:', fileUrl);
+    return null;
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">

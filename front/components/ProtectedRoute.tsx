@@ -39,14 +39,8 @@ export default function ProtectedRoute({ children, requiredRole }: ProtectedRout
         if (!hasAccess) {
           console.log(`[ProtectedRoute] User role ${user.role} doesn't match required role ${requiredRole}`);
           
-          // Redirect based on actual role
-          if (user.role === "student") {
-            router.push("/student/library");
-          } else if (user.role === "teacher" || user.role === "admin") {
-            router.push("/dashboard");
-          } else {
-            router.push("/");
-          }
+          // Redirect all users to /dashboard - it will show appropriate content based on role
+          router.push("/dashboard");
           return;
         }
       }

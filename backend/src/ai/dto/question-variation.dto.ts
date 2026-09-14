@@ -1,5 +1,24 @@
-import { IsString, IsEnum, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
+// Transformation goal (how to modify difficulty/context)
+export enum TransformationType {
+  EASIER = 'easier',
+  HARDER = 'harder',
+  SCENARIO_BASED = 'scenario_based',
+  SAME_CONCEPT = 'same_concept', // Same difficulty, just different wording
+}
+
+// Question format (the type of question)
+export enum QuestionFormat {
+  MCQ = 'mcq',
+  TRUE_FALSE = 'true_false',
+  SHORT_ANSWER = 'short_answer',
+  ESSAY = 'essay',
+  FILL_BLANK = 'fill_blank',
+}
+
+// Legacy enum for backward compatibility
 export enum VariationType {
   EASIER = 'easier',
   HARDER = 'harder',
@@ -9,15 +28,25 @@ export enum VariationType {
   SHORT_ANSWER = 'short_answer',
   ESSAY = 'essay',
   FILL_BLANK = 'fill_blank',
-  ALL = 'all', // Generate all variations
+  ALL = 'all',
+}
+
+// New structured variation request
+export class VariationRequest {
+  @IsEnum(TransformationType)
+  transformation: TransformationType;
+
+  @IsEnum(QuestionFormat)
+  questionType: QuestionFormat;
 }
 
 export class GenerateVariationDto {
   @IsString()
   questionId: string;
 
-  @IsEnum(VariationType)
-  variationType: VariationType;
+  @ValidateNested()
+  @Type(() => VariationRequest)
+  variation: VariationRequest;
 
   @IsOptional()
   @IsString()
@@ -29,8 +58,9 @@ export class GenerateMultipleVariationsDto {
   questionId: string;
 
   @IsArray()
-  @IsEnum(VariationType, { each: true })
-  variationTypes: VariationType[];
+  @ValidateNested({ each: true })
+  @Type(() => VariationRequest)
+  variations: VariationRequest[];
 
   @IsOptional()
   @IsString()
@@ -39,9 +69,10 @@ export class GenerateMultipleVariationsDto {
 
 export interface QuestionVariation {
   originalQuestionId: string;
-  variationType: VariationType;
+  transformation: TransformationType;
+  questionType: QuestionFormat;
   text: string;
-  type: string;
+  type: string; // Same as questionType, for backward compatibility
   options?: string[];
   correctAnswer?: string;
   difficulty: string;

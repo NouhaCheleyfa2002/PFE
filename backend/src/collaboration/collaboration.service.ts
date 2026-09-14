@@ -15,6 +15,7 @@ import { DocumentEntity } from '../documents/entities/document.entity';
 import { ExamEntity } from '../exams/entities/exam.entity';
 import { UserNotificationsService } from '../user-notifications/user-notifications.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { MailService } from '../mail/mail.service';
 import {
   InviteCollaboratorDto,
   UpdateCollaboratorDto,
@@ -51,6 +52,7 @@ export class CollaborationService {
     private notificationsService: UserNotificationsService,
     @Inject(forwardRef(() => NotificationsGateway))
     private notificationsGateway: NotificationsGateway,
+    private mailService: MailService,
   ) {}
 
   // ============================================================================
@@ -104,6 +106,19 @@ export class CollaborationService {
             'document',
             dto.role
           );
+          
+          // Send collaboration invitation email
+          const document = await this.documentRepo.findOne({ where: { id: resourceId } });
+          if (document) {
+            await this.mailService.sendCollaborationInvitation(
+              user.email,
+              inviter.fullName,
+              document.title || document.originalName,
+              dto.role,
+              resourceId
+            );
+            this.logger.log(`Collaboration invitation email sent to: ${user.email}`);
+          }
         } catch (error) {
           this.logger.warn(`Failed to send collaboration notification: ${error.message}`);
         }
@@ -144,6 +159,19 @@ export class CollaborationService {
         'document',
         dto.role
       );
+      
+      // Send collaboration invitation email
+      const document = await this.documentRepo.findOne({ where: { id: resourceId } });
+      if (document) {
+        await this.mailService.sendCollaborationInvitation(
+          user.email,
+          inviter.fullName,
+          document.title || document.originalName,
+          dto.role,
+          resourceId
+        );
+        this.logger.log(`Collaboration invitation email sent to: ${user.email}`);
+      }
     } catch (error) {
       this.logger.warn(`Failed to send collaboration notification: ${error.message}`);
     }
@@ -280,6 +308,25 @@ export class CollaborationService {
             responseMessage: message,
           },
         });
+        
+        // Send collaboration accepted email
+        const resource = resourceType === 'exam' 
+          ? await this.examRepo.findOne({ where: { id: resourceId } })
+          : await this.documentRepo.findOne({ where: { id: resourceId } });
+        
+        if (resource) {
+          const resourceTitle = resourceType === 'exam' 
+            ? (resource as any).title 
+            : ((resource as any).title || (resource as any).originalName);
+          
+          await this.mailService.sendCollaborationAccepted(
+            inviter.email,
+            user.fullName,
+            resourceTitle,
+            resourceId
+          );
+          this.logger.log(`Collaboration accepted email sent to: ${inviter.email}`);
+        }
       } else if (message) {
         // Declined with message
         await this.notificationsService.create({
@@ -309,12 +356,16 @@ export class CollaborationService {
    */
   async getMyPendingInvitations(userId: string): Promise<any> {
     try {
+      this.logger.log(`Fetching pending invitations for user: ${userId}`);
+      
       // Get resource invitations
       const resourceInvites = await this.resourceCollaboratorRepo.find({
         where: { userId, status: 'pending' },
         relations: ['inviter'],
         order: { invitedAt: 'DESC' },
       });
+      
+      this.logger.log(`Found ${resourceInvites.length} pending resource invitations`);
 
       // Get exam invitations
       const examInvites = await this.examCollaboratorRepo.find({
@@ -322,8 +373,18 @@ export class CollaborationService {
         relations: ['inviter'],
         order: { invitedAt: 'DESC' },
       });
+      
+      this.logger.log(`Found ${examInvites.length} pending exam invitations`);
+      this.logger.log(`Exam invitations raw:`, JSON.stringify(examInvites.map(inv => ({
+        id: inv.id,
+        examId: inv.examId,
+        userId: inv.userId,
+        invitedBy: inv.invitedBy,
+        inviterName: inv.inviter?.fullName,
+        status: inv.status,
+      }))));
 
-      return {
+      const result = {
         resources: resourceInvites.map(invite => ({
           id: invite.id,
           resourceId: invite.resourceId,
@@ -342,6 +403,9 @@ export class CollaborationService {
           invitedAt: invite.invitedAt,
         })),
       };
+      
+      this.logger.log(`Returning result:`, JSON.stringify(result));
+      return result;
     } catch (error) {
       this.logger.error(`Failed to get pending invitations: ${error.message}`, error.stack);
       return { resources: [], exams: [] };
@@ -580,6 +644,7 @@ export class CollaborationService {
           existing.role = dto.role;
           existing.invitedBy = inviterId;
           existing.invitedAt = new Date();
+          existing.permissions = dto.permissions || { edit: true, analytics: true, revenue: 0 };
           const saved = await this.examCollaboratorRepo.save(existing);
           
           await this.logActivity(examId, 'exam', inviterId, 'reinvite_collaborator', {
@@ -619,6 +684,7 @@ export class CollaborationService {
         invitedBy: inviterId,
         role: dto.role,
         status: 'pending',
+        permissions: dto.permissions || { edit: true, analytics: true, revenue: 0 },
       });
 
       const saved = await this.examCollaboratorRepo.save(collaborator);
@@ -675,6 +741,7 @@ export class CollaborationService {
         userEmail: collab.user?.email,
         role: collab.role,
         status: collab.status,
+        permissions: collab.permissions,
         invitedAt: collab.invitedAt,
         acceptedAt: collab.acceptedAt,
       }));

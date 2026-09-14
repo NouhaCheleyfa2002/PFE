@@ -76,10 +76,11 @@ export class BookmarksService {
       order: { createdAt: 'DESC' },
     });
 
-    // Transform to include document details
+    // Transform to include complete document details
     return bookmarks.map(bookmark => ({
       id: bookmark.id,
-      bookmarkedAt: bookmark.createdAt,
+      documentId: bookmark.documentId,
+      createdAt: bookmark.createdAt,
       document: {
         id: bookmark.document.id,
         title: bookmark.document.title,
@@ -89,8 +90,10 @@ export class BookmarksService {
         resourceType: bookmark.document.resourceType,
         storageUrl: bookmark.document.storageUrl,
         mimeType: bookmark.document.mimeType,
-        views: bookmark.document.views,
-        downloads: bookmark.document.downloads,
+        views: bookmark.document.views || 0,
+        downloads: bookmark.document.downloads || 0,
+        averageRating: bookmark.document.averageRating || 0,
+        totalRatings: bookmark.document.totalRatings || 0,
         createdAt: bookmark.document.createdAt,
       },
     }));

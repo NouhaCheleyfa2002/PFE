@@ -14,15 +14,22 @@ const getAuthHeaders = () => {
 // QUESTION VARIATIONS
 // ============================================================================
 
+// New structured format
+export interface VariationRequest {
+  transformation: 'easier' | 'harder' | 'scenario_based' | 'same_concept';
+  questionType: 'mcq' | 'true_false' | 'short_answer' | 'essay' | 'fill_blank';
+}
+
 export interface GenerateVariationRequest {
   questionId: string;
-  variationType: 'easier' | 'harder' | 'scenario_based' | 'mcq' | 'true_false' | 'short_answer' | 'essay' | 'fill_blank' | 'all';
+  variations: VariationRequest[];
   customInstructions?: string;
 }
 
 export interface QuestionVariation {
   id?: string;
-  variationType: string;
+  transformation: string;
+  questionType: string;
   text: string;
   type: string;
   options?: string[];
@@ -47,6 +54,18 @@ export const generateQuestionVariations = async (
   const response = await axios.post(
     `${API_URL}/ai/generate-variations`,
     data,
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const saveVariation = async (
+  variation: QuestionVariation,
+  originalQuestionId: string
+): Promise<{ success: boolean; question: any }> => {
+  const response = await axios.post(
+    `${API_URL}/ai/save-variation`,
+    { variation, originalQuestionId },
     { headers: getAuthHeaders() }
   );
   return response.data;
@@ -215,22 +234,24 @@ export const generateQuestions = async (
 // ============================================================================
 
 export interface GenerateExamRequest {
-  source: 'document' | 'extracted' | 'question-bank' | 'mixed';
+  source: 'uploaded_document' | 'extracted_questions' | 'question_bank' | 'mixed';
   documentId?: string;
   questionIds?: string[];
   totalQuestions: number;
-  questionTypes: {
-    mcq: boolean;
-    trueFalse: boolean;
-    shortAnswer: boolean;
-    essay: boolean;
+  questionDistribution?: {
+    mcq?: number;
+    trueFalse?: number;
+    shortAnswer?: number;
+    essay?: number;
+    fillBlank?: number;
+    matching?: number;
   };
-  difficulty: 'easy' | 'medium' | 'hard' | 'mixed';
-  bloomLevel: 'remember' | 'understand' | 'apply' | 'analyze' | 'evaluate' | 'create' | 'mixed';
-  durationMinutes: number;
-  totalMarks: number;
-  randomizeQuestions: boolean;
-  randomizeAnswers: boolean;
+  difficulty?: 'easy' | 'medium' | 'hard' | 'mixed';
+  bloomLevel?: 'remember' | 'understand' | 'apply' | 'analyze' | 'evaluate' | 'create' | 'mixed';
+  durationMinutes?: number;
+  totalMarks?: number;
+  randomizeQuestions?: boolean;
+  randomizeAnswers?: boolean;
   templateId?: string;
   examTitle?: string;
   examInstructions?: string;

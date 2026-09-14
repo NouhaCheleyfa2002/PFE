@@ -21,6 +21,9 @@ import {
   FileText,
   MessageSquare,
   Mail,
+  Bell,
+  ShoppingBag,
+  ShoppingCart,
 } from "lucide-react";
 import { authService, User } from "@/lib/auth";
 
@@ -29,10 +32,12 @@ const TEACHER_NAV = [
   {
     section: "Main",
     items: [
-      { label: "Dashboard",    href: "/dashboard",              icon: LayoutDashboard },
-      { label: "Library",      href: "/dashboard/library",      icon: BookOpen },
-      { label: "My Resources", href: "/dashboard/resources",    icon: Folder },
-      { label: "Invitations",  href: "/dashboard/invitations",  icon: Mail },
+      { label: "Dashboard",     href: "/dashboard",              icon: LayoutDashboard },
+      { label: "Marketplace",   href: "/dashboard/library",      icon: ShoppingBag },
+      { label: "My Resources",  href: "/dashboard/resources",    icon: Folder },
+      { label: "Cart",          href: "/dashboard/cart",         icon: ShoppingCart },
+      { label: "Invitations",   href: "/dashboard/invitations",  icon: Mail },
+      { label: "Notifications", href: "/dashboard/notifications", icon: Bell },
     ],
   },
   {
@@ -56,7 +61,8 @@ const ADMIN_NAV = [
   {
     section: "Overview",
     items: [
-      { label: "Overview",     href: "/dashboard/admin/overview",   icon: LayoutDashboard },
+      { label: "Overview",      href: "/dashboard/admin/overview",   icon: LayoutDashboard },
+      { label: "Notifications", href: "/dashboard/notifications",    icon: Bell },
     ],
   },
   {
@@ -66,15 +72,34 @@ const ADMIN_NAV = [
       { label: "Verification", href: "/dashboard/admin/verification", icon: ShieldCheck },
       { label: "Documents",    href: "/dashboard/admin/moderation",   icon: FileText },
       { label: "Ratings",      href: "/dashboard/admin/ratings-moderation", icon: MessageSquare },
-      { label: "All Courses",  href: "/dashboard/library",            icon: BookOpen },
+      { label: "Marketplace",  href: "/dashboard/library",            icon: ShoppingBag },
       { label: "Worker Tasks", href: "/dashboard/admin",              icon: ClipboardList },
     ],
   },
   {
     section: "System",
     items: [
-      { label: "Analytics",    href: "/dashboard/analytics",     icon: BarChart2 },
+      { label: "Analytics",    href: "/dashboard/admin/analytics",     icon: BarChart2 },
       { label: "Settings",     href: "/dashboard/settings",     icon: SettingsIcon },
+    ],
+  },
+];
+
+const STUDENT_NAV = [
+  {
+    section: "Main",
+    items: [
+      { label: "Dashboard",     href: "/dashboard",               icon: LayoutDashboard },
+      { label: "Marketplace",   href: "/dashboard/library",       icon: ShoppingBag },
+      { label: "My Library",    href: "/dashboard/resources",     icon: BookOpen },
+      { label: "Cart",          href: "/dashboard/cart",          icon: ShoppingCart },
+      { label: "Notifications", href: "/dashboard/notifications", icon: Bell },
+    ],
+  },
+  {
+    section: "Account",
+    items: [
+      { label: "Profile",       href: "/dashboard/profile",   icon: SettingsIcon },
     ],
   },
 ];
@@ -85,13 +110,37 @@ export default function Sidebar() {
   const router          = useRouter();
   const [open, setOpen] = useState(true);
   const [user, setUser] = useState<User | null>(null);
+  const [cartItemCount, setCartItemCount] = useState(0);
 
   useEffect(() => {
     setUser(authService.getUser());
+    updateCartCount();
+    
+    // Listen for cart updates
+    const handleCartUpdate = () => updateCartCount();
+    window.addEventListener('cartUpdated', handleCartUpdate);
+    
+    return () => window.removeEventListener('cartUpdated', handleCartUpdate);
   }, []);
 
+  const updateCartCount = () => {
+    const savedCart = localStorage.getItem('cart');
+    if (savedCart) {
+      try {
+        const cart = JSON.parse(savedCart);
+        const count = cart.reduce((sum: number, item: any) => sum + item.quantity, 0);
+        setCartItemCount(count);
+      } catch (error) {
+        console.error('Failed to parse cart:', error);
+      }
+    } else {
+      setCartItemCount(0);
+    }
+  };
+
   const isAdmin = user?.role === "admin";
-  const NAV     = isAdmin ? ADMIN_NAV : TEACHER_NAV;
+  const isStudent = user?.role === "student";
+  const NAV = isAdmin ? ADMIN_NAV : isStudent ? STUDENT_NAV : TEACHER_NAV;
 
   return (
     <aside
@@ -133,13 +182,14 @@ export default function Sidebar() {
 
             {items.map(({ label, href, icon: Icon }) => {
               const active = pathname === href;
+              const isCart = label === "Cart";
               return (
                 <Link
                   key={href}
                   href={href}
                   style={{ paddingLeft: open ? 24 : 18, paddingRight: open ? 24 : 18, transition: "padding 0.3s" }}
                   className={[
-                    "flex items-center gap-3 py-2.5 mx-2 rounded-[9px] text-sm font-medium whitespace-nowrap transition-colors duration-150",
+                    "flex items-center gap-3 py-2.5 mx-2 rounded-[9px] text-sm font-medium whitespace-nowrap transition-colors duration-150 relative",
                     active
                       ? isAdmin
                         ? "bg-[rgba(246,173,85,0.12)] text-[#f6ad55]"
@@ -153,6 +203,14 @@ export default function Sidebar() {
                   <span style={{ opacity: open ? 1 : 0, transition: "opacity 0.15s" }} className="whitespace-nowrap">
                     {label}
                   </span>
+                  {isCart && cartItemCount > 0 && (
+                    <span 
+                      className="absolute -top-1 left-8 w-5 h-5 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full"
+                      style={{ opacity: 1 }}
+                    >
+                      {cartItemCount > 9 ? '9+' : cartItemCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}

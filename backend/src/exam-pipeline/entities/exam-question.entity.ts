@@ -105,4 +105,8 @@ export class ExamQuestionEntity {
 
   @Column({ name: 'visual_context_keywords', type: 'text', array: true, nullable: true })
   visualContextKeywords: string[] | null;
+
+  // Question source type to distinguish AI-generated from manual
+  @Column({ name: 'source_type', type: 'varchar', length: 50, default: 'ai_extracted' })
+  sourceType: 'ai_extracted' | 'ai_generated' | 'ai_improved' | 'manual' | 'imported';
 }

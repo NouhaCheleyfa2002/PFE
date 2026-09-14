@@ -35,6 +35,12 @@ export class PurchaseEntity {
   @Index()
   status: string; // completed, pending, failed, refunded
 
+  @Column({ name: 'order_id', type: 'uuid', nullable: true })
+  orderId: string | null;
+
+  @Column({ name: 'stripe_session_id', type: 'varchar', length: 255, nullable: true })
+  stripeSessionId: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

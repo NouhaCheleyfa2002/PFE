@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { ResourceRating, RatingVote, ResourceBookmark, ResourceDownload } from './entities/rating.entity';
 import { CreateRatingDto, UpdateRatingDto } from './dto/rating.dto';
 import { DocumentsService } from '../documents/documents.service';
 import { UserNotificationsService } from '../user-notifications/user-notifications.service';
+import { ExamEntity } from '../exams/entities/exam.entity';
 
 @Injectable()
 export class RatingsService {
@@ -19,15 +20,44 @@ export class RatingsService {
     private bookmarksRepository: Repository<ResourceBookmark>,
     @InjectRepository(ResourceDownload)
     private downloadsRepository: Repository<ResourceDownload>,
+    @InjectRepository(ExamEntity)
+    private examRepository: Repository<ExamEntity>,
     private documentsService: DocumentsService,
     private userNotificationsService: UserNotificationsService,
   ) {}
 
-  // Check if user can rate (must have downloaded the resource)
-  async canUserRate(resourceId: string, userId: string): Promise<boolean> {
+  // Check if user can rate (must have downloaded the resource AND not be the owner)
+  async canUserRate(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<boolean> {
+    this.logger.log(`[canUserRate] Checking if user ${userId} can rate ${resourceType} ${resourceId}`);
+    
+    // Check if user is the owner
+    try {
+      if (resourceType === 'document') {
+        const document = await this.documentsService.findById(resourceId);
+        if (document && document.userId === userId) {
+          this.logger.log(`[canUserRate] User is document owner - cannot rate`);
+          return false; // Owners cannot rate their own resources
+        }
+      } else if (resourceType === 'exam') {
+        const exam = await this.examRepository.findOne({
+          where: { id: resourceId },
+          select: ['id', 'ownerId'],
+        });
+        this.logger.log(`[canUserRate] Exam ownerId: ${exam?.ownerId}, userId: ${userId}`);
+        if (exam && exam.ownerId === userId) {
+          this.logger.log(`[canUserRate] User is exam owner - cannot rate`);
+          return false; // Owners cannot rate their own exams
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`[canUserRate] Failed to check resource ownership: ${error.message}`);
+    }
+
+    // Check if user has downloaded/used the resource
     const download = await this.downloadsRepository.findOne({
-      where: { resourceId, userId },
+      where: { resourceId, userId, resourceType },
     });
+    this.logger.log(`[canUserRate] Download record found: ${!!download}`);
     return !!download;
   }
 
@@ -37,15 +67,41 @@ export class RatingsService {
     userId: string,
     createRatingDto: CreateRatingDto,
   ): Promise<ResourceRating> {
+    const resourceType = createRatingDto.resourceType || 'document';
+    
+    // Check if user is the resource owner
+    if (resourceType === 'document') {
+      const document = await this.documentsService.findById(resourceId);
+      if (!document) {
+        throw new NotFoundException('Resource not found');
+      }
+
+      if (document.userId === userId) {
+        throw new ForbiddenException('You cannot rate your own resource');
+      }
+    } else if (resourceType === 'exam') {
+      const exam = await this.examRepository.findOne({
+        where: { id: resourceId },
+        select: ['id', 'ownerId'],
+      });
+      if (!exam) {
+        throw new NotFoundException('Exam not found');
+      }
+
+      if (exam.ownerId === userId) {
+        throw new ForbiddenException('You cannot rate your own exam');
+      }
+    }
+
     // Check if user has downloaded the resource
-    const hasDownloaded = await this.canUserRate(resourceId, userId);
+    const hasDownloaded = await this.canUserRate(resourceId, userId, resourceType);
     if (!hasDownloaded) {
-      throw new ForbiddenException('You must download the resource before rating it');
+      throw new ForbiddenException('You must view/download the resource before rating it');
     }
 
     // Check if rating already exists
     let rating = await this.ratingsRepository.findOne({
-      where: { resourceId, teacherId: userId },
+      where: { resourceId, teacherId: userId, resourceType },
     });
 
     const isNewRating = !rating;
@@ -59,6 +115,7 @@ export class RatingsService {
       rating = this.ratingsRepository.create({
         resourceId,
         teacherId: userId,
+        resourceType,
         ...createRatingDto,
       });
     }
@@ -66,12 +123,10 @@ export class RatingsService {
     const savedRating = await this.ratingsRepository.save(rating);
 
     // Send notification to resource owner for new ratings only
-    if (isNewRating) {
+    if (isNewRating && resourceType === 'document') {
       try {
-        // Get document to find owner
         const document = await this.documentsService.findById(resourceId);
-        if (document && document.userId !== userId) {
-          // Don't notify if user rates their own resource
+        if (document) {
           await this.userNotificationsService.notifyNewReview(
             document.userId,
             resourceId,
@@ -81,7 +136,7 @@ export class RatingsService {
           );
 
           // Check if rating improved the average
-          const stats = await this.getRatingStats(resourceId);
+          const stats = await this.getRatingStats(resourceId, resourceType);
           if (stats.averageRating >= 4.5 && stats.totalRatings >= 5) {
             await this.userNotificationsService.notifyRatingIncreased(
               document.userId,
@@ -98,17 +153,21 @@ export class RatingsService {
   }
 
   // Get user's rating for a resource
-  async getUserRating(resourceId: string, userId: string): Promise<ResourceRating | null> {
+  async getUserRating(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<ResourceRating | null> {
     return await this.ratingsRepository.findOne({
-      where: { resourceId, teacherId: userId },
+      where: { resourceId, teacherId: userId, resourceType },
       relations: ['teacher'],
     });
   }
 
   // Get all ratings for a resource
-  async getResourceRatings(resourceId: string, limit = 50, offset = 0) {
+  async getResourceRatings(resourceId: string, resourceType: 'document' | 'exam' = 'document', limit = 50, offset = 0) {
     const [ratings, total] = await this.ratingsRepository.findAndCount({
-      where: { resourceId },
+      where: { 
+        resourceId, 
+        resourceType,
+        deletedAt: IsNull(), // Only get non-deleted ratings
+      },
       relations: ['teacher'],
       order: {
         helpfulVotes: 'DESC',
@@ -122,9 +181,13 @@ export class RatingsService {
   }
 
   // Get rating statistics for a resource
-  async getRatingStats(resourceId: string) {
+  async getRatingStats(resourceId: string, resourceType: 'document' | 'exam' = 'document') {
     const ratings = await this.ratingsRepository.find({
-      where: { resourceId },
+      where: { 
+        resourceId, 
+        resourceType,
+        deletedAt: IsNull(), // Only count non-deleted ratings
+      },
     });
 
     if (ratings.length === 0) {
@@ -206,37 +269,45 @@ export class RatingsService {
   }
 
   // Track resource download
-  async trackDownload(resourceId: string, userId: string): Promise<void> {
+  async trackDownload(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<void> {
+    this.logger.log(`[trackDownload] Tracking ${resourceType} ${resourceId} for user ${userId}`);
+    
     // Check if already downloaded
     const existing = await this.downloadsRepository.findOne({
-      where: { resourceId, userId },
+      where: { resourceId, userId, resourceType },
     });
     
     if (!existing) {
       const download = this.downloadsRepository.create({
         resourceId,
         userId,
+        resourceType,
       });
       await this.downloadsRepository.save(download);
+      this.logger.log(`[trackDownload] New download record created`);
       
-      // Also increment the downloads count in documents table
-      await this.documentsService.incrementDownloads(resourceId);
+      // Also increment the downloads count in documents table (only for documents)
+      if (resourceType === 'document') {
+        await this.documentsService.incrementDownloads(resourceId);
+      }
+    } else {
+      this.logger.log(`[trackDownload] Download already tracked`);
     }
   }
 
   // Check if user has downloaded a resource
-  async hasDownloaded(resourceId: string, userId: string): Promise<boolean> {
+  async hasDownloaded(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<boolean> {
     const download = await this.downloadsRepository.findOne({
-      where: { resourceId, userId },
+      where: { resourceId, userId, resourceType },
     });
     return !!download;
   }
 
   // Bookmark resource
-  async bookmarkResource(resourceId: string, userId: string): Promise<ResourceBookmark> {
+  async bookmarkResource(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<ResourceBookmark> {
     // Check if already bookmarked
     const existing = await this.bookmarksRepository.findOne({
-      where: { resourceId, userId },
+      where: { resourceId, userId, resourceType },
     });
 
     if (existing) {
@@ -246,20 +317,21 @@ export class RatingsService {
     const bookmark = this.bookmarksRepository.create({
       resourceId,
       userId,
+      resourceType,
     });
 
     return await this.bookmarksRepository.save(bookmark);
   }
 
   // Remove bookmark
-  async removeBookmark(resourceId: string, userId: string): Promise<void> {
-    await this.bookmarksRepository.delete({ resourceId, userId });
+  async removeBookmark(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<void> {
+    await this.bookmarksRepository.delete({ resourceId, userId, resourceType });
   }
 
   // Check if resource is bookmarked
-  async isBookmarked(resourceId: string, userId: string): Promise<boolean> {
+  async isBookmarked(resourceId: string, userId: string, resourceType: 'document' | 'exam' = 'document'): Promise<boolean> {
     const bookmark = await this.bookmarksRepository.findOne({
-      where: { resourceId, userId },
+      where: { resourceId, userId, resourceType },
     });
     return !!bookmark;
   }
@@ -290,9 +362,9 @@ export class RatingsService {
   }
 
   // Get common tags from all ratings
-  async getPopularTags(resourceId: string) {
+  async getPopularTags(resourceId: string, resourceType: 'document' | 'exam' = 'document') {
     const ratings = await this.ratingsRepository.find({
-      where: { resourceId },
+      where: { resourceId, resourceType },
       select: ['tags'],
     });
 

@@ -21,6 +21,17 @@ export class ExamCollaboratorEntity {
   @Column({ default: 'pending' })
   status: string; // 'pending', 'accepted', 'declined', 'removed'
 
+  @Column({ 
+    type: 'jsonb', 
+    nullable: true,
+    default: () => "'{}'" 
+  })
+  permissions: {
+    edit?: boolean;
+    analytics?: boolean;
+    revenue?: number;
+  };
+
   @Column({ name: 'invited_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   invitedAt: Date;
 

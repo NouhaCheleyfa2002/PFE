@@ -12,6 +12,9 @@ export class ResourceRating {
   @Column({ name: 'teacher_id', type: 'uuid' })
   teacherId: string;
 
+  @Column({ name: 'resource_type', type: 'varchar', length: 20, default: 'document' })
+  resourceType: 'document' | 'exam';
+
   @Column({ name: 'overall_rating', type: 'integer' })
   overallRating: number;
 
@@ -112,6 +115,9 @@ export class ResourceBookmark {
   @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
 
+  @Column({ name: 'resource_type', type: 'varchar', length: 20, default: 'document' })
+  resourceType: 'document' | 'exam';
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }
@@ -126,6 +132,9 @@ export class ResourceDownload {
 
   @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
+
+  @Column({ name: 'resource_type', type: 'varchar', length: 20, default: 'document' })
+  resourceType: 'document' | 'exam';
 
   @CreateDateColumn({ name: 'downloaded_at' })
   downloadedAt: Date;

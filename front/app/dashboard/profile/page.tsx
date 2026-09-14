@@ -19,6 +19,7 @@ import {
   Check,
 } from "lucide-react";
 import { authService, User as UserType } from "@/lib/auth";
+import toast from "react-hot-toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -125,6 +126,14 @@ export default function ProfilePage() {
         firstName: names[0] || "",
         lastName: names.slice(1).join(" ") || "",
       }));
+      
+      // Auto-fill professional data from registration
+      setProfessionalData(prev => ({
+        ...prev,
+        institution: currentUser.university || prev.institution,
+        subjects: currentUser.specialty ? [currentUser.specialty] : prev.subjects,
+      }));
+      
       // Only fetch verification status for teachers
       if (currentUser.role === "teacher") {
         fetchVerificationStatus();
@@ -223,9 +232,9 @@ export default function ProfilePage() {
         }
         throw new Error(`Failed to upload identity document: ${errorData.message || identityResponse.statusText}`);
       }
-      const identityData = await identityResponse.json();
-      console.log('Identity upload response:', identityData);
-      documentUrls.push(identityData.documents[0].storageUrl);
+      const identityUploadData = await identityResponse.json();
+      console.log('Identity upload response:', identityUploadData);
+      documentUrls.push(identityUploadData.documents[0].storageUrl);
 
       // Upload professional document
       const professionalFormData = new FormData();
@@ -354,16 +363,24 @@ export default function ProfilePage() {
 
       // Step 3: Submit verification request with URLs
       const verificationPayload = {
-        fullName: `${identityData.firstName} ${identityData.lastName}`,
+        fullName: `${identityData.firstName} ${identityData.lastName}`.trim() || user?.fullName || 'Unknown',
         institution: professionalData.institution,
         teachingLevel: teachingLevel,
         subjects: professionalData.subjects,
         documentUrls: documentUrls,
         verificationVideoUrl: verificationVideoUrl,
         verificationCode: verificationCode,
+        idNumber: identityData.idNumber,
       };
 
-      const response = await fetch(`${API_URL}/verification/request`, {
+      console.log('Submitting verification with payload:', verificationPayload);
+      console.log('Identity data STATE:', {
+        firstName: identityData.firstName,
+        lastName: identityData.lastName,
+        idNumber: identityData.idNumber,
+        dateOfBirth: identityData.dateOfBirth,
+      });
+      console.log('User:', user);      const response = await fetch(`${API_URL}/verification/request`, {
         method: "POST",
         headers: { 
           Authorization: `Bearer ${token}`,
@@ -373,6 +390,9 @@ export default function ProfilePage() {
       });
 
       if (response.ok) {
+        toast.success("📧 Verification request submitted! Confirmation email sent to your inbox", {
+          duration: 5000,
+        });
         setShowVerificationWizard(false);
         setCurrentStep(1);
         setShowSuccessModal(true);
@@ -447,6 +467,10 @@ export default function ProfilePage() {
 
       if (response.ok) {
         setPasswordMessage({ type: "success", text: "Password changed successfully!" });
+        toast.success("📧 Password changed! Confirmation email sent", {
+          duration: 5000,
+          icon: "✅",
+        });
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
@@ -712,6 +736,27 @@ export default function ProfilePage() {
 
                   <button
                     onClick={() => {
+                      // Reset and pre-fill form data
+                      if (user) {
+                        const names = user.fullName?.split(" ") || [];
+                        setIdentityData({
+                          firstName: names[0] || "",
+                          lastName: names.slice(1).join(" ") || "",
+                          dateOfBirth: "",
+                          country: "Tunisia",
+                          idType: "national_id",
+                          idNumber: "",
+                        });
+                        setProfessionalData({
+                          institution: user.university || "",
+                          institutionEmail: "",
+                          role: "teacher",
+                          yearsOfExperience: "",
+                          teachingLevels: [],
+                          subjects: user.specialty ? [user.specialty] : [],
+                          professionalLicense: "",
+                        });
+                      }
                       setShowVerificationWizard(true);
                       setCurrentStep(1);
                       generateVerificationCode();

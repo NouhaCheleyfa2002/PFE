@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";
-import { ArrowLeft, BookOpen, GraduationCap, FlaskConical, Globe, Calculator, Code, Palette, TrendingUp, FileText, Filter, FileCheck, Eye, Download, Bookmark, BookmarkCheck, BadgeCheck, DollarSign, ShoppingCart, Lock, Loader2 } from "lucide-react";
+import { ArrowLeft, BookOpen, GraduationCap, FlaskConical, Globe, Calculator, Code, Palette, TrendingUp, FileText, Filter, FileCheck, Eye, Download, Bookmark, BookmarkCheck, BadgeCheck, DollarSign, ShoppingCart, Lock, Loader2, CheckCircle, Check } from "lucide-react";
+import { toast } from "react-hot-toast";
 import { authService } from "@/lib/auth";
 import { EDUCATION_LEVELS, EducationLevel } from "@/lib/education-config";
 import { ResourceDetailModal } from "@/components/library/ResourceDetailModal";
 import { StarRating } from "@/components/ratings";
 import { useBookmarks } from "@/lib/use-bookmarks";
-import PaymentModal from "@/components/PaymentModal";
+import { ExamViewerModal } from "@/components/exam/ExamViewerModal";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -23,6 +24,7 @@ interface LibraryResource {
     lastName: string;
     verified: boolean;
   };
+  coAuthors?: Array<{ userId: string; fullName: string; role: string }>;
   type: string;
   resourceType: string;
   subject: string;
@@ -181,6 +183,16 @@ const TUNISIAN_SUBJECTS = [
     textColor: "text-rose-700",
     keywords: ["arts", "music", "musique", "فنون", "موسيقى"],
   },
+  {
+    id: "other",
+    name: "Other Subjects",
+    arabicName: "مواد أخرى",
+    icon: BookOpen,
+    color: "from-gray-500 to-gray-600",
+    bgColor: "bg-gray-50",
+    textColor: "text-gray-700",
+    keywords: [], // Will catch unmapped subjects
+  },
 ];
 
 export default function LibraryPage() {
@@ -193,16 +205,35 @@ export default function LibraryPage() {
   const [purchasedDocuments, setPurchasedDocuments] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [selectedResource, setSelectedResource] = useState<LibraryResource | null>(null);
-  const [paymentModal, setPaymentModal] = useState<{ isOpen: boolean; document: LibraryResource | null }>({
-    isOpen: false,
-    document: null,
-  });
+  const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
+  const [cartItems, setCartItems] = useState<Set<string>>(new Set());
+
+  // Load cart items from localStorage
+  const loadCartItems = () => {
+    const savedCart = localStorage.getItem('cart');
+    if (savedCart) {
+      const cart = JSON.parse(savedCart);
+      const documentIds = new Set(cart.map((item: any) => item.documentId));
+      setCartItems(documentIds);
+    }
+  };
 
   useEffect(() => {
     const user = authService.getUser();
     if (user?.id) setCurrentUserId(user.id);
     fetchResources();
     fetchPurchasedDocuments();
+    loadCartItems();
+
+    // Listen for cart updates
+    const handleCartUpdate = () => {
+      loadCartItems();
+    };
+    window.addEventListener('cartUpdated', handleCartUpdate);
+    
+    return () => {
+      window.removeEventListener('cartUpdated', handleCartUpdate);
+    };
   }, []);
 
   const fetchPurchasedDocuments = async () => {
@@ -229,16 +260,60 @@ export default function LibraryPage() {
     }
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/documents/library`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setResources(data.documents || []);
-        if (data.documents) {
-          data.documents.forEach((doc: LibraryResource) => checkBookmark(doc.id));
+      
+      // Fetch both documents and exams
+      const [docsResponse, examsResponse] = await Promise.all([
+        fetch(`${API_URL}/documents/library`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_URL}/exams/marketplace/list`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      
+      const combinedResources: LibraryResource[] = [];
+      
+      // Add documents
+      if (docsResponse.ok) {
+        const docsData = await docsResponse.json();
+        if (docsData.documents) {
+          combinedResources.push(...docsData.documents);
+          docsData.documents.forEach((doc: LibraryResource) => checkBookmark(doc.id));
         }
       }
+      
+      // Add exams
+      if (examsResponse.ok) {
+        const examsData = await examsResponse.json();
+        if (examsData.exams) {
+          // Map exams to LibraryResource format
+          const mappedExams: LibraryResource[] = examsData.exams.map((exam: any) => ({
+            id: exam.id,
+            title: exam.title,
+            originalName: exam.title, // Exams don't have originalName
+            author: exam.owner || { id: exam.ownerId, firstName: 'Unknown', lastName: '', verified: false },
+            coAuthors: exam.coAuthors || [], // Include co-authors from collaborative exam creation
+            type: 'Exam',
+            resourceType: 'Exam',
+            subject: exam.subject || '',
+            classLevel: exam.classLevel || '',
+            averageRating: exam.averageRating || 0,
+            totalRatings: exam.totalRatings || 0,
+            downloads: exam.downloads || 0,
+            views: exam.views || 0,
+            storageUrl: '', // Exams don't have storage URL - they're viewed inline
+            createdAt: exam.publishedAt || exam.createdAt,
+            license: exam.license || 'free',
+            price: exam.price || 0,
+            keywords: exam.keywords || [],
+            description: exam.description || '',
+          }));
+          combinedResources.push(...mappedExams);
+          mappedExams.forEach((exam) => checkBookmark(exam.id));
+        }
+      }
+      
+      setResources(combinedResources);
     } catch (error) {
       console.error("Failed to fetch library resources:", error);
     } finally {
@@ -247,17 +322,32 @@ export default function LibraryPage() {
   };
 
   const handleView = (resource: LibraryResource) => {
+    // If it's an exam, open exam viewer modal
+    if (resource.resourceType === 'Exam' || resource.type === 'Exam') {
+      setSelectedExamId(resource.id);
+      return;
+    }
     setSelectedResource(resource);
   };
 
   const handleDownload = async (resource: LibraryResource) => {
-    if (resource.license === "paid" && !purchasedDocuments.has(resource.id)) {
-      setPaymentModal({ isOpen: true, document: resource });
+    // Exams can be downloaded/printed from the viewer modal
+    if (resource.resourceType === 'Exam' || resource.type === 'Exam') {
+      setSelectedExamId(resource.id);
       return;
     }
+    
+    // If resource is paid and not purchased, suggest adding to cart
+    if (resource.license === "paid" && !purchasedDocuments.has(resource.id)) {
+      toast.error('Please purchase this resource first', { icon: <ShoppingCart className="w-5 h-5" /> });
+      addToCart(resource);
+      return;
+    }
+    
     const token = authService.getToken();
     if (!token) return;
     try {
+      // Only track download for documents (not exams)
       await fetch(`${API_URL}/ratings/resources/${resource.id}/download`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -270,21 +360,59 @@ export default function LibraryPage() {
     }
   };
 
-  const handlePurchaseClick = (resource: LibraryResource) => {
-    setPaymentModal({ isOpen: true, document: resource });
-  };
-
-  const handlePaymentSuccess = () => {
-    fetchPurchasedDocuments();
-    fetchResources();
+  const addToCart = (resource: LibraryResource) => {
+    // Exams cannot be purchased via cart
+    if (resource.resourceType === 'Exam' || resource.type === 'Exam') {
+      toast.error('Exams cannot be added to cart. View them directly instead.');
+      return;
+    }
+    
+    // Get existing cart from localStorage
+    const savedCart = localStorage.getItem('cart');
+    const cart = savedCart ? JSON.parse(savedCart) : [];
+    
+    // Check if item already in cart
+    const existingItem = cart.find((item: any) => item.documentId === resource.id);
+    if (existingItem) {
+      // Increment quantity
+      existingItem.quantity += 1;
+    } else {
+      // Add new item
+      cart.push({
+        id: `cart-${Date.now()}`,
+        documentId: resource.id,
+        title: resource.title,
+        subject: resource.subject,
+        classLevel: resource.classLevel,
+        price: resource.price || 0,
+        license: resource.license || 'free',
+        quantity: 1,
+      });
+    }
+    
+    // Save back to localStorage
+    localStorage.setItem('cart', JSON.stringify(cart));
+    
+    // Update cart items state
+    setCartItems(prev => new Set([...prev, resource.id]));
+    
+    // Dispatch event to update cart badge
+    window.dispatchEvent(new Event('cartUpdated'));
+    
+    // Show success message
+    const itemCount = cart.reduce((sum: number, item: any) => sum + item.quantity, 0);
+    toast.success(`Added to cart! You have ${itemCount} item(s) in your cart.`);
   };
 
   // Filter by tab and level
   const tabAndLevelFiltered = useMemo(() => {
     return resources.filter(r => {
-      const resourceTypeLower = r.resourceType?.toLowerCase();
-      if (activeTab === "courses" && resourceTypeLower === "exam") return false;
-      if (activeTab === "exams" && resourceTypeLower !== "exam") return false;
+      const resourceTypeLower = (r.resourceType || '').toLowerCase();
+      const resourceType = (r.type || '').toLowerCase();
+      const isExam = resourceTypeLower === "exam" || resourceType === "exam";
+      
+      if (activeTab === "courses" && isExam) return false;
+      if (activeTab === "exams" && !isExam) return false;
       if (levelFilter !== "All" && r.classLevel !== levelFilter) return false;
       return true;
     });
@@ -293,16 +421,33 @@ export default function LibraryPage() {
   // Map resources to Tunisian subjects
   const resourcesBySubject = useMemo(() => {
     const mapped = new Map<string, LibraryResource[]>();
+    const unmappedResources: LibraryResource[] = [];
+    
     tabAndLevelFiltered.forEach(resource => {
       const subjectLower = (resource.subject || '').toLowerCase();
+      console.log('[Library] Mapping resource:', { title: resource.title, subject: resource.subject, subjectLower });
+      
       const tunisianSubject = TUNISIAN_SUBJECTS.find(ts =>
         ts.keywords.some(keyword => subjectLower.includes(keyword.toLowerCase()))
       );
+      
       if (tunisianSubject) {
+        console.log('[Library] Matched to:', tunisianSubject.name);
         const existing = mapped.get(tunisianSubject.id) || [];
         mapped.set(tunisianSubject.id, [...existing, resource]);
+      } else {
+        console.log('[Library] No match found for subject:', resource.subject);
+        unmappedResources.push(resource);
       }
     });
+    
+    // Add unmapped resources to "other" category
+    if (unmappedResources.length > 0) {
+      mapped.set('other', unmappedResources);
+    }
+    
+    console.log('[Library] Resources by subject:', Array.from(mapped.entries()).map(([id, resources]) => ({ id, count: resources.length })));
+    
     return mapped;
   }, [tabAndLevelFiltered]);
 
@@ -363,12 +508,26 @@ export default function LibraryPage() {
                       <div className="flex-1">
                         <h3 className="font-semibold text-[#0d1b3e] mb-1">{doc.title}</h3>
                         <div className="flex items-center gap-2 text-xs text-[#8899bb]">
-                          <span className="flex items-center gap-1">{doc.author.firstName} {doc.author.lastName}{doc.author.verified && <BadgeCheck className="w-4 h-4 text-green-500" />}</span>
+                          <span className="flex items-center gap-1">
+                            {doc.author.firstName} {doc.author.lastName}
+                            {doc.author.verified && <BadgeCheck className="w-4 h-4 text-green-500" />}
+                            {doc.coAuthors && doc.coAuthors.length > 0 && (
+                              <span className="ml-1 text-[#63b3ed]">
+                                & {doc.coAuthors.length} co-author{doc.coAuthors.length > 1 ? 's' : ''}
+                              </span>
+                            )}
+                          </span>
                           <span>•</span><span>{doc.subject}</span><span>•</span><span>{doc.classLevel}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {doc.license === "paid" && doc.price && (
+                        {purchasedDocuments.has(doc.id) && (
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200">
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                            <span className="text-sm font-semibold text-green-700">Purchased</span>
+                          </div>
+                        )}
+                        {doc.license === "paid" && doc.price && !purchasedDocuments.has(doc.id) && (
                           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#fef3c7] to-[#fde68a] border border-[#fbbf24]">
                             <DollarSign className="w-4 h-4 text-[#92400e]" /><span className="text-sm font-bold text-[#92400e]">{doc.price} TND</span>
                           </div>
@@ -381,16 +540,73 @@ export default function LibraryPage() {
                           {isBookmarked(doc.id) ? <BookmarkCheck className="w-4 h-4 text-[#63b3ed] fill-[#63b3ed]" /> : <Bookmark className="w-4 h-4 text-[#8899bb]" />}
                         </button>
                         <button onClick={() => handleView(doc)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#63b3ed] text-white text-xs font-medium hover:bg-[#4299e1] transition-colors">
-                          <Eye className="w-3.5 h-3.5" />View
+                          <Eye className="w-3.5 h-3.5" />
+                          {doc.type === 'Exam' || doc.resourceType === 'Exam' ? 'Open Exam' : 'View'}
                         </button>
                         {(() => {
                           const isOwner = doc.author.id === currentUserId;
                           const isPaid = doc.license === "paid";
+                          const isFree = doc.license === "free";
                           const isPurchased = purchasedDocuments.has(doc.id);
-                          if (isPaid && !isPurchased && !isOwner) {
+                          const isExam = doc.type === 'Exam' || doc.resourceType === 'Exam';
+                          
+                          // Paid resource not owned and not purchased (and not an exam)
+                          if (isPaid && !isPurchased && !isOwner && !isExam) {
+                            const isInCart = cartItems.has(doc.id);
                             return (
-                              <button onClick={() => handlePurchaseClick(doc)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#f6ad55] to-[#ed8936] text-white text-xs font-medium hover:from-[#ed8936] hover:to-[#dd6b20] transition-colors">
-                                <ShoppingCart className="w-3.5 h-3.5" />Purchase
+                              <button 
+                                onClick={() => !isInCart && addToCart(doc)} 
+                                disabled={isInCart}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shadow-sm ${
+                                  isInCart 
+                                    ? 'bg-green-100 text-green-700 border border-green-300 cursor-default' 
+                                    : 'bg-gradient-to-r from-[#63b3ed] to-[#4299e1] text-white hover:from-[#4299e1] hover:to-[#3182ce]'
+                                }`}
+                              >
+                                {isInCart ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5" />
+                                    Added to Cart
+                                  </>
+                                ) : (
+                                  <>
+                                    <ShoppingCart className="w-3.5 h-3.5" />
+                                    Add to Cart
+                                  </>
+                                )}
+                              </button>
+                            );
+                          } else if (isFree && !isPurchased && !isOwner) {
+                            // Free resource not yet added to library
+                            return (
+                              <button 
+                                onClick={async () => {
+                                  try {
+                                    const token = authService.getToken();
+                                    const response = await fetch(
+                                      `${API_URL}/student/add-free-resource/${doc.id}`,
+                                      {
+                                        method: 'POST',
+                                        headers: { Authorization: `Bearer ${token}` },
+                                      }
+                                    );
+                                    const data = await response.json();
+                                    if (!response.ok) throw new Error(data.message);
+                                    
+                                    if (data.alreadyAdded) {
+                                      toast.success('Already in your library!');
+                                    } else {
+                                      toast.success('Added to your library!');
+                                      fetchPurchasedDocuments(); // Refresh
+                                    }
+                                  } catch (error: any) {
+                                    toast.error(error.message || 'Failed to add resource');
+                                  }
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 text-white text-xs font-medium hover:from-green-600 hover:to-emerald-600 transition-colors shadow-sm"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                Add to Library
                               </button>
                             );
                           } else if (isOwner && isPaid) {
@@ -402,7 +618,8 @@ export default function LibraryPage() {
                           } else {
                             return (
                               <button onClick={() => handleDownload(doc)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#edf0f7] text-[#4a5568] text-xs font-medium hover:border-[#63b3ed] hover:text-[#63b3ed] hover:bg-[#f6f8ff] transition-colors">
-                                <Download className="w-3.5 h-3.5" />Download
+                                <Download className="w-3.5 h-3.5" />
+                                {isExam ? 'Open' : 'Download'}
                               </button>
                             );
                           }
@@ -411,6 +628,15 @@ export default function LibraryPage() {
                     </div>
                     <div className="flex items-center gap-3 mt-3">
                       <span className="px-2 py-1 rounded-md bg-[#f6f8ff] text-xs text-[#4a5568]">{doc.type}</span>
+                      {(doc.type === 'Exam' || doc.resourceType === 'Exam') && (doc as any).questions?.length > 0 && (
+                        <span className="flex items-center gap-1 px-2 py-1 rounded-md bg-blue-100 text-blue-700 text-xs font-medium">
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 3.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM2 10a8 8 0 1116 0 8 8 0 01-16 0z"/>
+                            <path d="M10 6a1 1 0 011 1v3a1 1 0 11-2 0V7a1 1 0 011-1zm0 7a1 1 0 100 2 1 1 0 000-2z"/>
+                          </svg>
+                          Interactive Mode
+                        </span>
+                      )}
                       <span className="text-xs text-[#8899bb]">{doc.views} views • {doc.downloads} downloads</span>
                     </div>
                     {doc.description && (
@@ -433,10 +659,10 @@ export default function LibraryPage() {
         </div>
 
         {selectedResource && (
-          <ResourceDetailModal resource={{ id: selectedResource.id, title: selectedResource.title, author: `${selectedResource.author.firstName} ${selectedResource.author.lastName}`, type: selectedResource.type, subject: selectedResource.subject, level: selectedResource.classLevel, rating: selectedResource.averageRating, verified: selectedResource.author.verified, fileUrl: selectedResource.storageUrl, fileName: selectedResource.originalName, views: selectedResource.views, downloads: selectedResource.downloads }} isOpen={!!selectedResource} onClose={() => { setSelectedResource(null); fetchResources(); }} />
+          <ResourceDetailModal resource={{ id: selectedResource.id, title: selectedResource.title, author: `${selectedResource.author.firstName} ${selectedResource.author.lastName}`, type: selectedResource.type, subject: selectedResource.subject, level: selectedResource.classLevel, rating: selectedResource.averageRating, verified: selectedResource.author.verified, fileUrl: selectedResource.storageUrl, fileName: selectedResource.originalName, views: selectedResource.views, downloads: selectedResource.downloads }} isOpen={!!selectedResource} onClose={() => { setSelectedResource(null); fetchResources(); }} onDataChanged={fetchResources} />
         )}
-        {paymentModal.document && (
-          <PaymentModal isOpen={paymentModal.isOpen} onClose={() => setPaymentModal({ isOpen: false, document: null })} document={{ id: paymentModal.document.id, title: paymentModal.document.title, price: paymentModal.document.price || 0, currency: "TND" }} onSuccess={handlePaymentSuccess} />
+        {selectedExamId && (
+          <ExamViewerModal examId={selectedExamId} isOpen={!!selectedExamId} onClose={() => setSelectedExamId(null)} />
         )}
       </div>
     );
@@ -446,8 +672,8 @@ export default function LibraryPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-2xl font-bold text-[#0d1b3e]">Library</h1>
-        <p className="text-sm text-[#8899bb] mt-1">Browse community resources by subject</p>
+        <h1 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-2xl font-bold text-[#0d1b3e]">Marketplace</h1>
+        <p className="text-sm text-[#8899bb] mt-1">Browse and purchase educational resources</p>
       </div>
 
       {/* Tab Navigation */}

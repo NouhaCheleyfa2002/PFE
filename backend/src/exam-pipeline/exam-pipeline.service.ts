@@ -445,7 +445,7 @@ export class ExamPipelineService {
   async findAll(
     page: number = 1,
     limit: number = 20,
-    filters?: { topic?: string; difficulty?: string },
+    filters?: { topic?: string; difficulty?: string; sourceType?: string },
   ) {
     const skip = (page - 1) * limit;
 
@@ -459,6 +459,11 @@ export class ExamPipelineService {
     if (filters?.difficulty) {
       query = query.andWhere('q.difficulty = :difficulty', {
         difficulty: filters.difficulty,
+      });
+    }
+    if (filters?.sourceType) {
+      query = query.andWhere('q.sourceType = :sourceType', {
+        sourceType: filters.sourceType,
       });
     }
 

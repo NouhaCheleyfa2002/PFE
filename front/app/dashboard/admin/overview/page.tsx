@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { authService } from "@/lib/auth";
+import { adminApi, AdminStatistics, RecentActivity } from "@/lib/api/admin";
 import { useRouter } from "next/navigation";
 import {
   Users,
@@ -11,12 +12,8 @@ import {
   FileQuestion,
   DollarSign,
   Activity,
-  TrendingUp,
   Clock,
   CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Sparkles,
   Flag,
   Database,
   Megaphone,
@@ -25,10 +22,14 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
+
 export default function AdminOverviewPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
+  const [statistics, setStatistics] = useState<AdminStatistics | null>(null);
+  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [activityLoading, setActivityLoading] = useState(true);
 
   useEffect(() => {
     const currentUser = authService.getUser();
@@ -36,9 +37,36 @@ export default function AdminOverviewPage() {
       router.push("/dashboard");
       return;
     }
-    setUser(currentUser);
     setLoading(false);
+
+    // Fetch statistics
+    fetchStatistics();
+    fetchRecentActivity();
   }, [router]);
+
+  const fetchStatistics = async () => {
+    try {
+      setStatsLoading(true);
+      const stats = await adminApi.getStatistics();
+      setStatistics(stats);
+    } catch (error) {
+      console.error('Failed to fetch statistics:', error);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  const fetchRecentActivity = async () => {
+    try {
+      setActivityLoading(true);
+      const activity = await adminApi.getRecentActivity();
+      setRecentActivity(activity);
+    } catch (error) {
+      console.error('Failed to fetch recent activity:', error);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
 
   // Handler for broadcast announcement
   const handleBroadcastAnnouncement = async () => {
@@ -76,6 +104,24 @@ export default function AdminOverviewPage() {
     }
   };
 
+  // Get activity icon and color based on type
+  const getActivityIcon = (type: string) => {
+    switch (type) {
+      case 'verification':
+        return { icon: <CheckCircle className="w-4 h-4" />, color: 'bg-green-100 text-green-600' };
+      case 'upload':
+        return { icon: <Upload className="w-4 h-4" />, color: 'bg-blue-100 text-blue-600' };
+      case 'exam':
+        return { icon: <FileQuestion className="w-4 h-4" />, color: 'bg-purple-100 text-purple-600' };
+      case 'payment':
+        return { icon: <DollarSign className="w-4 h-4" />, color: 'bg-emerald-100 text-emerald-600' };
+      case 'organization':
+        return { icon: <Users className="w-4 h-4" />, color: 'bg-indigo-100 text-indigo-600' };
+      default:
+        return { icon: <Activity className="w-4 h-4" />, color: 'bg-gray-100 text-gray-600' };
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -103,50 +149,54 @@ export default function AdminOverviewPage() {
       {/* 1. Platform Overview - Top KPI Cards */}
       <div>
         <h2 className="text-lg font-semibold text-[#0d1b3e] mb-4">Platform Overview</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <KPICard
-            title="Total Users"
-            value="12,486"
-            icon={<Users className="w-5 h-5" />}
-            color="bg-blue-100 text-blue-600"
-            trend="+12.5%"
-          />
-          <KPICard
-            title="Verified Teachers"
-            value="8,974"
-            icon={<BadgeCheck className="w-5 h-5" />}
-            color="bg-green-100 text-green-600"
-            trend="+8.2%"
-          />
-          <KPICard
-            title="Courses"
-            value="1,256"
-            icon={<BookOpen className="w-5 h-5" />}
-            color="bg-purple-100 text-purple-600"
-            trend="+15.3%"
-          />
-          <KPICard
-            title="Resources"
-            value="34,529"
-            icon={<FileText className="w-5 h-5" />}
-            color="bg-indigo-100 text-indigo-600"
-            trend="+22.1%"
-          />
-          <KPICard
-            title="Exams Created"
-            value="18,743"
-            icon={<FileQuestion className="w-5 h-5" />}
-            color="bg-orange-100 text-orange-600"
-            trend="+18.9%"
-          />
-          <KPICard
-            title="Revenue"
-            value="24,300 DT"
-            icon={<DollarSign className="w-5 h-5" />}
-            color="bg-emerald-100 text-emerald-600"
-            trend="+31.2%"
-          />
-        </div>
+        {statsLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+          </div>
+        ) : statistics ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <KPICard
+              title="Total Users"
+              value={statistics.totalUsers.toLocaleString()}
+              icon={<Users className="w-5 h-5" />}
+              color="bg-blue-100 text-blue-600"
+            />
+            <KPICard
+              title="Verified Teachers"
+              value={statistics.verifiedTeachers.toLocaleString()}
+              icon={<BadgeCheck className="w-5 h-5" />}
+              color="bg-green-100 text-green-600"
+            />
+            <KPICard
+              title="Courses"
+              value={statistics.coursesCount.toLocaleString()}
+              icon={<BookOpen className="w-5 h-5" />}
+              color="bg-purple-100 text-purple-600"
+            />
+            <KPICard
+              title="Resources"
+              value={statistics.totalDocuments.toLocaleString()}
+              icon={<FileText className="w-5 h-5" />}
+              color="bg-indigo-100 text-indigo-600"
+            />
+            <KPICard
+              title="Exams Created"
+              value={statistics.examsCount.toLocaleString()}
+              icon={<FileQuestion className="w-5 h-5" />}
+              color="bg-orange-100 text-orange-600"
+            />
+            <KPICard
+              title="Revenue"
+              value={`${statistics.revenue.toLocaleString()} DT`}
+              icon={<DollarSign className="w-5 h-5" />}
+              color="bg-emerald-100 text-emerald-600"
+            />
+          </div>
+        ) : (
+          <div className="text-center py-12 text-[#8899bb]">
+            Failed to load statistics
+          </div>
+        )}
       </div>
 
       {/* Recent Activity Feed & Quick Actions */}
@@ -155,19 +205,32 @@ export default function AdminOverviewPage() {
         <div className="lg:col-span-2">
           <h2 className="text-lg font-semibold text-[#0d1b3e] mb-4">Recent Activity Feed</h2>
           <div className="bg-white rounded-xl border border-[#edf0f7] p-6">
-            <div className="space-y-4">
-              {mockRecentActivity.map((activity, index) => (
-                <div key={index} className="flex items-start gap-3 pb-4 border-b border-[#f4f6fc] last:border-0">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${activity.color}`}>
-                    {activity.icon}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm text-[#0d1b3e]">{activity.text}</p>
-                    <p className="text-xs text-[#8899bb] mt-1">{activity.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {activityLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+              </div>
+            ) : recentActivity.length > 0 ? (
+              <div className="space-y-4">
+                {recentActivity.map((activity, index) => {
+                  const { icon, color } = getActivityIcon(activity.type);
+                  return (
+                    <div key={index} className="flex items-start gap-3 pb-4 border-b border-[#f4f6fc] last:border-0">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
+                        {icon}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm text-[#0d1b3e]">{activity.text}</p>
+                        <p className="text-xs text-[#8899bb] mt-1">{activity.time}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-[#8899bb]">
+                No recent activity in the last 24 hours
+              </div>
+            )}
           </div>
         </div>
 
@@ -212,10 +275,10 @@ export default function AdminOverviewPage() {
                 <span className="text-sm font-medium">Backup Database</span>
               </button>
               <button 
-                onClick={() => router.push('/dashboard/analytics')}
+                onClick={() => router.push('/dashboard/admin/analytics')}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors text-left"
               >
-                <FileText className="w-5 h-5 flex-shrink-0" />
+                <Activity className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm font-medium">View Analytics</span>
               </button>
             </div>
@@ -227,7 +290,12 @@ export default function AdminOverviewPage() {
 }
 
 // Component: KPI Card
-function KPICard({ title, value, icon, color, trend }: any) {
+function KPICard({ title, value, icon, color }: {
+  title: string;
+  value: string;
+  icon: React.ReactNode;
+  color: string;
+}) {
   return (
     <div className="bg-white rounded-xl border border-[#edf0f7] p-4 hover:shadow-md transition-shadow">
       <div className={`w-10 h-10 rounded-lg ${color} flex items-center justify-center mb-3`}>
@@ -235,52 +303,7 @@ function KPICard({ title, value, icon, color, trend }: any) {
       </div>
       <p className="text-2xl font-bold text-[#0d1b3e]">{value}</p>
       <p className="text-xs text-[#8899bb] mt-1">{title}</p>
-      {trend && (
-        <div className="flex items-center gap-1 mt-2">
-          <TrendingUp className="w-3 h-3 text-green-600" />
-          <span className="text-xs text-green-600 font-semibold">{trend}</span>
-        </div>
-      )}
     </div>
   );
 }
 
-// Mock Data
-const mockRecentActivity = [
-  {
-    text: "Ahmed Ben Ali verified as educator",
-    time: "2 minutes ago",
-    icon: <CheckCircle className="w-4 h-4" />,
-    color: "bg-green-100 text-green-600",
-  },
-  {
-    text: "52 resources uploaded by various teachers",
-    time: "15 minutes ago",
-    icon: <Upload className="w-4 h-4" />,
-    color: "bg-blue-100 text-blue-600",
-  },
-  {
-    text: "14 exams generated using AI",
-    time: "1 hour ago",
-    icon: <Sparkles className="w-4 h-4" />,
-    color: "bg-purple-100 text-purple-600",
-  },
-  {
-    text: "3 new organizations created accounts",
-    time: "2 hours ago",
-    icon: <Users className="w-4 h-4" />,
-    color: "bg-indigo-100 text-indigo-600",
-  },
-  {
-    text: "Payment received: 847 DT from marketplace",
-    time: "3 hours ago",
-    icon: <DollarSign className="w-4 h-4" />,
-    color: "bg-emerald-100 text-emerald-600",
-  },
-  {
-    text: "Teacher Sarah Khalil approved after review",
-    time: "4 hours ago",
-    icon: <BadgeCheck className="w-4 h-4" />,
-    color: "bg-green-100 text-green-600",
-  },
-];

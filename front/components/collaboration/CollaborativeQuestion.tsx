@@ -15,6 +15,8 @@ interface CollaborativeQuestionProps {
   onFocus?: () => void;
   onBlur?: () => void;
   onEditingChange?: (ref: { startEditing: () => void; stopEditing: () => void }) => void;
+  isSelected?: boolean; // Whether this question is currently selected/focused
+  hasCollaborators?: boolean; // Whether there are other collaborators in the session
 }
 
 export default function CollaborativeQuestion({
@@ -25,9 +27,12 @@ export default function CollaborativeQuestion({
   onFocus,
   onBlur,
   onEditingChange,
+  isSelected = false,
+  hasCollaborators = false,
 }: CollaborativeQuestionProps) {
   const elementId = `question-${questionId || questionIndex}`;
   const [showComments, setShowComments] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const questionRef = useRef<HTMLDivElement>(null);
 
   const { getEditingUser, startEditing, stopEditing } = useElementEditing(examId);
@@ -43,12 +48,28 @@ export default function CollaborativeQuestion({
   const questionComments = getCommentsByElement(elementId);
   const unresolvedCount = getUnresolvedCount(elementId);
 
+  // Debug logging
+  useEffect(() => {
+    console.log('[CollaborativeQuestion] State update:', {
+      elementId,
+      hasEditingUser: !!editingUser,
+      editingUser: editingUser ? { userName: editingUser.userName, color: editingUser.color } : null,
+    });
+  }, [elementId, editingUser]);
+
   // Expose editing methods to parent
   useEffect(() => {
     if (onEditingChange) {
+      console.log('[CollaborativeQuestion] Exposing editing methods for element:', elementId);
       onEditingChange({
-        startEditing: () => startEditing(elementId, 'question'),
-        stopEditing: () => stopEditing(elementId),
+        startEditing: () => {
+          console.log('[CollaborativeQuestion] startEditing() method called for:', elementId);
+          startEditing(elementId, 'question');
+        },
+        stopEditing: () => {
+          console.log('[CollaborativeQuestion] stopEditing() method called for:', elementId);
+          stopEditing(elementId);
+        },
       });
     }
   }, [elementId, startEditing, stopEditing, onEditingChange]);
@@ -82,6 +103,11 @@ export default function CollaborativeQuestion({
       ref={questionRef}
       className="relative"
       data-element-id={elementId}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      tabIndex={0} // Make it focusable
     >
       {/* Debug: Log element ID */}
       {process.env.NODE_ENV === 'development' && (
@@ -95,14 +121,16 @@ export default function CollaborativeQuestion({
         {children}
       </QuestionEditingOverlay>
 
-      {/* Comment Marker - Always visible */}
-      <CommentMarker
-        elementId={elementId}
-        commentCount={questionComments.length}
-        unresolvedCount={unresolvedCount}
-        onClick={() => setShowComments(!showComments)}
-        position="bottom-right"
-      />
+      {/* Comment Marker - Show on hover or when there are existing comments */}
+      {(isHovered || questionComments.length > 0 || showComments) && (
+        <CommentMarker
+          elementId={elementId}
+          commentCount={questionComments.length}
+          unresolvedCount={unresolvedCount}
+          onClick={() => setShowComments(!showComments)}
+          position="bottom-right"
+        />
+      )}
 
       {/* Comment Thread Popover */}
       {showComments && (

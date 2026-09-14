@@ -19,8 +19,9 @@ interface Review {
   updatedAt: string;
   teacher: {
     id: string;
-    firstName: string;
-    lastName: string;
+    fullName?: string;
+    firstName?: string;
+    lastName?: string;
     verified: boolean;
   };
 }
@@ -81,6 +82,14 @@ export function ReviewList({
     );
   }
 
+  console.log('[ReviewList] Rendering reviews:', reviews.map(r => ({ 
+    id: r.id, 
+    teacher: r.teacher,
+    teacherFullName: r.teacher?.fullName,
+    teacherFirstName: r.teacher?.firstName,
+    teacherLastName: r.teacher?.lastName
+  })));
+
   return (
     <div className="space-y-4">
       {reviews.map((review) => {
@@ -96,13 +105,25 @@ export function ReviewList({
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-[#63b3ed]/10 flex items-center justify-center">
                   <span className="text-sm font-semibold text-[#63b3ed]">
-                    {review.teacher?.firstName?.[0] || ''}{review.teacher?.lastName?.[0] || ''}
+                    {review.teacher?.fullName ? 
+                      review.teacher.fullName.split(' ').map(n => n[0]?.toUpperCase()).filter(Boolean).slice(0, 2).join('') 
+                      : review.teacher?.firstName?.[0]?.toUpperCase() + (review.teacher?.lastName?.[0]?.toUpperCase() || '') 
+                      || 'U'}
                   </span>
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-[#0d1b3e]">
-                      {review.teacher?.firstName || 'Unknown'} {review.teacher?.lastName || ''}
+                      {(() => {
+                        // Priority: fullName > firstName + lastName > 'User'
+                        if (review.teacher?.fullName) {
+                          return review.teacher.fullName;
+                        }
+                        if (review.teacher?.firstName || review.teacher?.lastName) {
+                          return `${review.teacher.firstName || ''} ${review.teacher.lastName || ''}`.trim();
+                        }
+                        return 'User';
+                      })()}
                     </span>
                     {review.teacher?.verified && (
                       <BadgeCheck className="w-4 h-4 text-green-500" />

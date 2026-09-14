@@ -168,16 +168,16 @@ export default function LandingPage() {
               </button>
               
               <button 
-                onClick={() => router.push("/auth")}
+                onClick={() => router.push("/auth?type=teacher")}
                 className={`px-5 py-2 text-sm font-medium ${isDarkMode ? 'text-gray-300 hover:text-white' : 'text-gray-700 hover:text-[#2563EB]'} transition-colors`}
               >
                 Sign In
               </button>
               <button 
-                onClick={() => router.push("/auth")}
+                onClick={() => router.push("/auth?type=student")}
                 className={`group relative px-6 py-2.5 rounded-full ${isDarkMode ? 'bg-white text-black' : 'bg-[#2563EB] text-white'} text-sm font-semibold overflow-hidden transition-all hover:scale-105 shadow-lg`}
               >
-                <span className="relative">Join Us</span>
+                <span className="relative">Sign In as Student</span>
               </button>
             </div>
           </div>
@@ -188,10 +188,7 @@ export default function LandingPage() {
       <section className="relative pt-32 pb-20 px-6 overflow-hidden">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-20">
-            <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-sm'} backdrop-blur-sm border mb-8`}>
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Trusted by 10,000+ educators worldwide</span>
-            </div>
+          
             
             <h1 className="text-[clamp(2.5rem,8vw,5.5rem)] font-bold leading-[1.1] mb-6 tracking-tight">
               Where educators create<br />
@@ -207,10 +204,17 @@ export default function LandingPage() {
 
             <div className="flex items-center justify-center gap-4">
               <button 
-                onClick={() => router.push("/auth")}
+                onClick={() => router.push("/auth?type=teacher")}
                 className={`group px-10 py-5 rounded-full ${isDarkMode ? 'bg-white text-black' : 'bg-[#2563EB] text-white'} font-semibold text-lg hover:scale-105 transition-all flex items-center gap-2 shadow-xl`}
               >
-                Join Us
+                Sign In
+                <ArrowRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
+              </button>
+              <button 
+                onClick={() => router.push("/auth?type=student")}
+                className={`group px-10 py-5 rounded-full ${isDarkMode ? 'bg-white/10 border-2 border-white/20 hover:bg-white/20' : 'bg-gray-100 border-2 border-gray-300 hover:bg-gray-200'} font-semibold text-lg transition-all flex items-center gap-2`}
+              >
+                Sign In as Student
                 <ArrowRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
               </button>
             </div>

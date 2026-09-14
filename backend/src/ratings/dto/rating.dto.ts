@@ -1,6 +1,10 @@
 import { IsInt, IsBoolean, IsString, IsArray, IsOptional, Min, Max, IsEnum } from 'class-validator';
 
 export class CreateRatingDto {
+  @IsOptional()
+  @IsEnum(['document', 'exam'])
+  resourceType?: 'document' | 'exam' = 'document';
+
   @IsInt()
   @Min(1)
   @Max(5)

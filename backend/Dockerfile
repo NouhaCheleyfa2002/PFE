@@ -2,6 +2,17 @@
 
 FROM node:20-alpine AS development
 
+# Install build dependencies for canvas and other native modules
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    cairo-dev \
+    jpeg-dev \
+    pango-dev \
+    giflib-dev \
+    pixman-dev
+
 # Set working directory
 WORKDIR /app
 

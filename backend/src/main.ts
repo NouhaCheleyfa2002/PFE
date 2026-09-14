@@ -6,9 +6,15 @@ import { initializePgVector } from './config/database-init';
 import * as express from 'express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: false, // Disable default body parser
+  });
   
-  // Increase JSON body size limit for image uploads (50MB)
+  // Special handling for Stripe webhook - must receive raw body
+  // This middleware runs BEFORE express.json() for the webhook route
+  app.use('/payment/webhook', express.raw({ type: 'application/json' }));
+  
+  // Configure body parsing for all other routes
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
   
@@ -35,6 +41,6 @@ async function bootstrap() {
     // Continue anyway - the extension might already exist
   }
   
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 bootstrap();

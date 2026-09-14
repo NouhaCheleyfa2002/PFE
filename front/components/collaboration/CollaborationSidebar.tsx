@@ -310,6 +310,11 @@ export default function CollaborationSidebar({
     );
   }
 
+  // Hide sidebar if there are no collaborators (only current user or no users)
+  if (activeUsers.length <= 1) {
+    return null;
+  }
+
   return (
     <div className="fixed right-0 top-16 bottom-0 w-80 bg-white border-l border-gray-200 shadow-xl flex flex-col z-40">
       {/* Header */}

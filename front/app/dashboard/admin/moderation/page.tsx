@@ -29,13 +29,18 @@ import {
   ArrowDown,
   FileType,
   Upload,
+  Sparkles,
 } from "lucide-react";
 import { authService } from "@/lib/auth";
+import toast from "react-hot-toast";
+import { ExamViewerModal } from "@/components/exam/ExamViewerModal";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
 interface PendingDocument {
   id: string;
+  type?: 'document' | 'exam';
+  examId?: string;
   document: {
     id: string;
     title: string;
@@ -87,6 +92,15 @@ interface PendingDocument {
   };
   processingCompleted: boolean;
   ocrText?: string | null;
+  examMetadata?: {
+    questionsCount: number;
+    duration: string;
+    maxPoints: number;
+    license: string;
+    price?: number;
+    description?: string;
+    keywords?: string[];
+  };
   timeline?: {
     uploaded: string;
     processingStarted?: string | null;
@@ -186,6 +200,7 @@ export default function DocumentModerationPage() {
   const [modalNotes, setModalNotes] = useState("");
   const [filter, setFilter] = useState<"all" | "high-risk" | "critical" | "flagged">("all");
   const [showOcrText, setShowOcrText] = useState(false);
+  const [showExamViewer, setShowExamViewer] = useState(false);
 
   const fetchData = async () => {
     const token = authService.getToken();
@@ -277,7 +292,14 @@ export default function DocumentModerationPage() {
       });
 
       if (response.ok) {
-        alert("Action completed successfully!");
+        const itemType = selectedDoc?.type === 'exam' ? 'Exam' : 'Document';
+        if (modalAction === 'approve') {
+          toast.success(`✅ ${itemType} approved and published to marketplace!`);
+        } else if (modalAction === 'reject') {
+          toast.success(`🚫 ${itemType} rejected`);
+        } else if (modalAction === 'request-changes') {
+          toast.success(`📝 Changes requested for ${itemType}`);
+        }
         setShowActionModal(false);
         setShowDetailDrawer(false);
         setModalReason("");
@@ -286,11 +308,11 @@ export default function DocumentModerationPage() {
         setModalAction(null);
         fetchData();
       } else {
-        alert("Action failed!");
+        toast.error("❌ Action failed. Please try again.");
       }
     } catch (error) {
       console.error("Action failed:", error);
-      alert("Action failed!");
+      toast.error("❌ Action failed. Please try again.");
     }
   };
 
@@ -446,22 +468,22 @@ export default function DocumentModerationPage() {
 
       {/* Filters */}
       <div className="flex gap-2">
-        {(["all", "high-risk", "critical", "flagged"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
-              filter === f
-                ? "bg-[#0d1b3e] text-white border-[#0d1b3e]"
-                : "bg-white text-[#5a7299] border-[#edf0f7] hover:border-[#0d1b3e]/30"
-            }`}
-          >
-            {f === "all" ? "All" : f.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
-          </button>
-        ))}
+          {(["all", "high-risk", "critical", "flagged"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                filter === f
+                  ? "bg-[#0d1b3e] text-white border-[#0d1b3e]"
+                  : "bg-white text-[#5a7299] border-[#edf0f7] hover:border-[#0d1b3e]/30"
+              }`}
+            >
+              {f === "all" ? "All" : f.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
+            </button>
+          ))}
       </div>
 
-      {/* Compact Document Cards */}
+      {/* Document Cards - showing both documents and exams */}
       <div className="space-y-3">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-[#8899bb] bg-white rounded-xl border border-[#edf0f7]">
@@ -477,65 +499,89 @@ export default function DocumentModerationPage() {
             <p className="text-sm text-[#8899bb]">All pending submissions have been reviewed</p>
           </div>
         ) : (
-          filteredDocs.map((doc) => (
-            <div
-              key={doc.id}
-              className="bg-white rounded-lg border border-[#edf0f7] p-4 hover:shadow-md transition-all cursor-pointer"
-              onClick={() => viewDetails(doc)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 flex-1">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#63b3ed] to-[#a78bfa] flex items-center justify-center text-white flex-shrink-0">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-[#0d1b3e] truncate">{doc.document.title}</h3>
-                    <div className="flex items-center gap-3 text-xs text-[#8899bb] mt-1">
-                      <span className="flex items-center gap-1">
-                        <User className="w-3 h-3" />
-                        {doc.document.uploadedBy}
-                      </span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {new Date(doc.document.uploadedAt).toLocaleDateString()}
-                      </span>
+          filteredDocs.map((doc) => {
+            const isExam = doc.type === 'exam';
+            return (
+              <div
+                key={doc.id}
+                className="bg-white rounded-lg border border-[#edf0f7] p-4 hover:shadow-md transition-all cursor-pointer"
+                onClick={() => viewDetails(doc)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className={`w-10 h-10 rounded-lg ${
+                      isExam 
+                        ? 'bg-gradient-to-br from-purple-500 to-pink-500'
+                        : 'bg-gradient-to-br from-[#63b3ed] to-[#a78bfa]'
+                    } flex items-center justify-center text-white flex-shrink-0`}>
+                      {isExam ? <Sparkles className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-[#0d1b3e] truncate">{doc.document.title}</h3>
+                        {isExam && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">
+                            <Sparkles className="w-3 h-3" />
+                            AI Exam
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-[#8899bb] mt-1">
+                        <span className="flex items-center gap-1">
+                          <User className="w-3 h-3" />
+                          {doc.document.uploadedBy}
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {new Date(doc.document.uploadedAt).toLocaleDateString()}
+                        </span>
+                        {isExam && doc.examMetadata && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <FileText className="w-3 h-3" />
+                              {doc.examMetadata.questionsCount} questions
+                            </span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-                
-                <div className="flex items-center gap-4 ml-4">
-                  <div className="flex flex-col items-end gap-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#8899bb]">Risk:</span>
-                      {getRiskBadge(doc.riskLevel)}
+                  
+                  <div className="flex items-center gap-4 ml-4">
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-[#8899bb]">Risk:</span>
+                        {getRiskBadge(doc.riskLevel)}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-[#8899bb]">Score:</span>
+                        <span className="text-sm font-bold text-[#0d1b3e]">{doc.aiScores.overall}%</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#8899bb]">Score:</span>
-                      <span className="text-sm font-bold text-[#0d1b3e]">{doc.aiScores.overall}%</span>
-                    </div>
-                  </div>
 
-                  <div className="flex flex-col items-end gap-1">
-                    <div className="flex items-center gap-1 text-xs">
-                      {getRecommendationIcon(doc.aiRecommendation.action)}
-                      <span className="font-semibold text-[#0d1b3e]">{doc.aiRecommendation.action.toUpperCase().replace("_", " ")}</span>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1 text-xs">
+                        {getRecommendationIcon(doc.aiRecommendation.action)}
+                        <span className="font-semibold text-[#0d1b3e]">{doc.aiRecommendation.action.toUpperCase().replace("_", " ")}</span>
+                      </div>
+                      <span className="text-xs text-[#8899bb]">{Math.round(doc.aiRecommendation.confidence * 100)}% confidence</span>
                     </div>
-                    <span className="text-xs text-[#8899bb]">{Math.round(doc.aiRecommendation.confidence * 100)}% confidence</span>
+
+                    {doc.issues.length > 0 && (
+                      <div className="flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded">
+                        <AlertTriangle className="w-3 h-3 text-red-600" />
+                        <span className="text-xs font-semibold text-red-600">{doc.issues.length}</span>
+                      </div>
+                    )}
+
+                    <ChevronRight className="w-5 h-5 text-[#8899bb]" />
                   </div>
-
-                  {doc.issues.length > 0 && (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded">
-                      <AlertTriangle className="w-3 h-3 text-red-600" />
-                      <span className="text-xs font-semibold text-red-600">{doc.issues.length}</span>
-                    </div>
-                  )}
-
-                  <ChevronRight className="w-5 h-5 text-[#8899bb]" />
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -619,6 +665,76 @@ export default function DocumentModerationPage() {
 
             {/* Drawer Body */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Exam Metadata Display (for AI-generated exams) */}
+              {selectedDoc.type === 'exam' && selectedDoc.examMetadata && (
+                <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl overflow-hidden">
+                  <div className="bg-purple-100 border-b border-purple-200 px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-purple-600" />
+                      <h3 className="font-bold text-purple-900">AI-Generated Exam Details</h3>
+                    </div>
+                  </div>
+                  <div className="p-5 space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <div>
+                        <p className="text-xs text-purple-600 mb-1">Questions</p>
+                        <p className="text-lg font-bold text-[#0d1b3e]">{selectedDoc.examMetadata.questionsCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-purple-600 mb-1">Duration</p>
+                        <p className="text-lg font-bold text-[#0d1b3e]">{selectedDoc.examMetadata.duration}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-purple-600 mb-1">Max Points</p>
+                        <p className="text-lg font-bold text-[#0d1b3e]">{selectedDoc.examMetadata.maxPoints}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-purple-600 mb-1">License</p>
+                        <p className="text-sm font-semibold text-[#0d1b3e]">
+                          {selectedDoc.examMetadata.license === 'paid' 
+                            ? `Paid (${selectedDoc.examMetadata.price} TND)` 
+                            : 'Free'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {selectedDoc.examMetadata.description && (
+                      <div>
+                        <p className="text-xs text-purple-600 mb-1">Description</p>
+                        <p className="text-sm text-[#5a7299]">{selectedDoc.examMetadata.description}</p>
+                      </div>
+                    )}
+
+                    {selectedDoc.examMetadata.keywords && selectedDoc.examMetadata.keywords.length > 0 && (
+                      <div>
+                        <p className="text-xs text-purple-600 mb-1">Keywords</p>
+                        <div className="flex flex-wrap gap-1">
+                          {selectedDoc.examMetadata.keywords.map((keyword, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-700 font-medium"
+                            >
+                              {keyword}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* View Full Exam Button */}
+                    {selectedDoc.examId && (
+                      <button
+                        onClick={() => setShowExamViewer(true)}
+                        className="w-full flex items-center justify-center gap-2 p-4 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors font-semibold"
+                      >
+                        <Eye className="w-5 h-5" />
+                        View Full Exam ({selectedDoc.examMetadata.questionsCount} questions)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* AI Recommendation - MAIN FEATURE with Why */}
               <div className={`p-6 rounded-xl border-2 ${
                 selectedDoc.aiRecommendation.action === "approve" ? "bg-green-50 border-green-300" :
@@ -1206,6 +1322,17 @@ export default function DocumentModerationPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Exam Viewer Modal - for viewing full exam details */}
+      {showExamViewer && selectedDoc && selectedDoc.type === 'exam' && selectedDoc.examId && (
+        <ExamViewerModal
+          examId={selectedDoc.examId}
+          isOpen={showExamViewer}
+          onClose={() => {
+            setShowExamViewer(false);
+          }}
+        />
       )}
     </div>
   );

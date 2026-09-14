@@ -9,7 +9,7 @@ export default function DashboardRootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ProtectedRoute requiredRole="teacher-or-admin">
+    <ProtectedRoute>
       <ResourcesProvider>
         <QuestionsProvider>
           <DashboardLayout>{children}</DashboardLayout>

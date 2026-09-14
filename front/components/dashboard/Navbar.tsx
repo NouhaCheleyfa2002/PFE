@@ -211,9 +211,9 @@ export default function Navbar() {
           </div>
           <div className="overflow-hidden">
             <p className="text-[13px] font-semibold text-[#0d1b3e] truncate max-w-[140px]">{user?.fullName || "Loading..."}</p>
-            <div className={`flex items-center gap-1 text-[11px] mt-0.5 ${user?.role === 'admin' ? "text-[#f6ad55]" : "text-[#3d8b3d]"}`}>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${user?.role === 'admin' ? "bg-[#f6ad55]" : "bg-[#48bb78]"}`} />
-              {user?.role === 'admin' ? "Administrator" : "Verified Educator"}
+            <div className={`flex items-center gap-1 text-[11px] mt-0.5 ${user?.role === 'admin' ? "text-[#f6ad55]" : user?.verified ? "text-[#3d8b3d]" : "text-[#8899bb]"}`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${user?.role === 'admin' ? "bg-[#f6ad55]" : user?.verified ? "bg-[#48bb78]" : "bg-[#aab4cc]"}`} />
+              {user?.role === 'admin' ? "Administrator" : user?.verified ? "Verified Educator" : "Teacher"}
             </div>
           </div>
         </Link>

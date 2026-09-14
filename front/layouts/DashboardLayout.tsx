@@ -1,17 +1,31 @@
-import React from "react";
+"use client";
+
+import React, { useEffect, useState } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
+import StudentSidebar from "@/components/dashboard/StudentSidebar";
 import Navbar from "@/components/dashboard/Navbar";
+import { authService } from "@/lib/auth";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
+  const [userRole, setUserRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    const user = authService.getUser();
+    setUserRole(user?.role || null);
+  }, []);
+
+  // Show student sidebar for students
+  const SidebarComponent = userRole === "student" ? StudentSidebar : Sidebar;
+
   return (
     <div className="flex min-h-screen bg-[#f6f8ff]">
       {/* ── Fixed sidebar ── */}
       <div className="sticky top-0 h-screen">
-        <Sidebar />
+        <SidebarComponent />
       </div>
 
       {/* ── Scrollable right column ── */}

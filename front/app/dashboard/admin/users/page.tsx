@@ -232,14 +232,28 @@ export default function AdminUsersPage() {
       });
 
       if (response.ok) {
-        alert("Action completed successfully!");
+        let successMessage = "";
+        switch (action) {
+          case "unban":
+            successMessage = "✅ User unbanned successfully";
+            break;
+          case "unrestrict":
+            successMessage = "✅ User restrictions removed";
+            break;
+          case "verify":
+            successMessage = "✅ User verified successfully";
+            break;
+          default:
+            successMessage = "✅ Action completed successfully";
+        }
+        toast.success(successMessage);
         fetchUsers();
       } else {
-        alert("Action failed!");
+        toast.error("❌ Action failed. Please try again.");
       }
     } catch (error) {
       console.error("Action failed:", error);
-      alert("Action failed!");
+      toast.error("❌ Action failed. Please try again.");
     }
   };
 
@@ -284,18 +298,35 @@ export default function AdminUsersPage() {
       });
 
       if (response.ok) {
-        alert("Action completed successfully!");
+        let successMessage = "";
+        switch (showModal) {
+          case "ban":
+            successMessage = "🚫 User banned successfully";
+            break;
+          case "restrict":
+            successMessage = "⚠️ User restricted successfully";
+            break;
+          case "delete":
+            successMessage = "🗑️ User deleted successfully";
+            break;
+          case "role":
+            successMessage = `✅ User role updated to ${modalRole}`;
+            break;
+          default:
+            successMessage = "✅ Action completed successfully";
+        }
+        toast.success(successMessage);
         setShowModal(null);
         setModalReason("");
         setSelectedUser(null);
         fetchUsers();
       } else {
         const error = await response.json();
-        alert(error.message || "Action failed!");
+        toast.error(error.message || "❌ Action failed. Please try again.");
       }
     } catch (error) {
       console.error("Action failed:", error);
-      alert("Action failed!");
+      toast.error("❌ Action failed. Please try again.");
     }
   };
 

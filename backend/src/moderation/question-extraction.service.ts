@@ -57,22 +57,19 @@ export class QuestionExtractionService {
     try {
       this.logger.log('Extracting questions from document...');
 
-      // Truncate text if too long (first 15000 chars)
-      const truncatedText = text.substring(0, 15000);
-
       const systemPrompt = `You are an expert in analyzing educational documents and extracting questions. Extract questions from exams, quizzes, and worksheets. Be concise and return valid JSON only.`;
 
       const userPrompt = `Extract questions from this document. Return ONLY valid JSON, no markdown, no explanations.
 
-Document text (excerpt):
+Document text:
 """
-${truncatedText}
+${text}
 """
 
 Subject: ${subject || 'Unknown'}
 Grade Level: ${gradeLevel || 'Unknown'}
 
-Extract up to 30 questions maximum (STRICT LIMIT). For each question:
+Extract ALL questions found in the document. For each question:
 1. questionText - the actual question
 2. questionType - one of: mcq, true_false, open, fill_blank, match, image
 3. options - array of answer choices (for MCQ only)
@@ -107,7 +104,7 @@ JSON format:
 CRITICAL REQUIREMENTS:
 - Return ONLY valid JSON, nothing else
 - Explanations MAX 30 characters (VERY SHORT or omit!)
-- Extract ALL questions found in the document (no limit)
+- Extract ALL questions found in the document
 - Set hasVisualContent=true if question mentions:
   * Graphs, tables, diagrams, figures, documents, schemas
   * Symbolic references like "R1, R2, R3" or "C1, C2" or "M1, M2" (labeled elements in diagrams)
@@ -263,6 +260,21 @@ CRITICAL REQUIREMENTS:
       
       this.logger.log(`${validQuestions.length} of ${questions.length} questions are valid`);
       
+      // DUPLICATE DETECTION: Filter out questions that already exist in this document
+      const uniqueQuestions = await this.filterDuplicateQuestions(documentId, validQuestions);
+      
+      if (uniqueQuestions.length < validQuestions.length) {
+        const duplicateCount = validQuestions.length - uniqueQuestions.length;
+        this.logger.warn(`⚠️ Filtered out ${duplicateCount} duplicate questions`);
+      }
+      
+      if (uniqueQuestions.length === 0) {
+        this.logger.warn('No unique questions to save (all were duplicates)');
+        return 0;
+      }
+      
+      this.logger.log(`${uniqueQuestions.length} unique questions to save`);
+      
       // Fetch document to get OCR data if needed (for visual content)
       let ocrData: any = null;
       const hasVisualQuestions = validQuestions.some(q => q.hasVisualContent);
@@ -290,11 +302,18 @@ CRITICAL REQUIREMENTS:
         }
       }
       
-      const questionEntities = validQuestions.map((q, index) => {
+      const questionEntities = uniqueQuestions.map((q, index) => {
         const entity = new ExamQuestionEntity();
         entity.documentId = documentId;
         entity.questionText = q.questionText.trim();
-        entity.questionType = q.questionType;
+        
+        // FIX: Ensure MCQ questions with options are classified correctly
+        if ((q.questionType === 'mcq' || q.questionType === 'open') && q.options && q.options.length > 0) {
+          entity.questionType = 'mcq'; // Force MCQ if options exist
+        } else {
+          entity.questionType = q.questionType;
+        }
+        
         entity.difficulty = q.difficulty;
         entity.pageNumber = q.pageNumber || null;
         entity.options = q.options && q.options.length > 0 ? q.options : null;
@@ -972,5 +991,117 @@ CRITICAL REQUIREMENTS:
     }
 
     return labels;
+  }
+
+  /**
+   * Filter out duplicate questions from a list
+   * Uses fuzzy text matching to detect similar questions
+   */
+  private async filterDuplicateQuestions(
+    documentId: string,
+    questions: ExtractedQuestion[],
+  ): Promise<ExtractedQuestion[]> {
+    try {
+      // Get all existing questions for this document
+      const existingQuestions = await this.questionRepository.find({
+        where: { documentId },
+        select: ['questionText'],
+      });
+
+      if (existingQuestions.length === 0) {
+        return questions; // No existing questions, all are unique
+      }
+
+      const existingTexts = existingQuestions.map(q => this.normalizeQuestionText(q.questionText));
+      const uniqueQuestions: ExtractedQuestion[] = [];
+
+      for (const question of questions) {
+        const normalizedQuestion = this.normalizeQuestionText(question.questionText);
+        
+        // Check if this question already exists
+        const isDuplicate = existingTexts.some(existingText => {
+          // Exact match after normalization
+          if (existingText === normalizedQuestion) {
+            return true;
+          }
+
+          // Fuzzy match: check if questions are very similar (>85% similarity)
+          const similarity = this.calculateSimilarity(existingText, normalizedQuestion);
+          return similarity > 0.85;
+        });
+
+        if (!isDuplicate) {
+          uniqueQuestions.push(question);
+          // Add to existing texts to prevent duplicates within the new batch
+          existingTexts.push(normalizedQuestion);
+        } else {
+          this.logger.log(`Duplicate detected: "${question.questionText.substring(0, 60)}..."`);
+        }
+      }
+
+      return uniqueQuestions;
+    } catch (error) {
+      this.logger.error('Failed to filter duplicates:', error);
+      // On error, return all questions to not block the extraction
+      return questions;
+    }
+  }
+
+  /**
+   * Normalize question text for comparison
+   */
+  private normalizeQuestionText(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
+  }
+
+  /**
+   * Calculate similarity between two strings using Levenshtein distance
+   * Returns a value between 0 (completely different) and 1 (identical)
+   */
+  private calculateSimilarity(str1: string, str2: string): number {
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+
+    if (longer.length === 0) {
+      return 1.0;
+    }
+
+    const distance = this.levenshteinDistance(longer, shorter);
+    return (longer.length - distance) / longer.length;
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const matrix: number[][] = [];
+
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i];
+    }
+
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1,     // insertion
+            matrix[i - 1][j] + 1,     // deletion
+          );
+        }
+      }
+    }
+
+    return matrix[str2.length][str1.length];
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";
-import { ArrowLeft, BookOpen, GraduationCap, FlaskConical, Globe, Calculator, Code, Palette, TrendingUp, FileText, Filter, Edit2, Trash2, Save, X as XIcon, Image as ImageIcon, BarChart2, Table as TableIcon, Scissors, Sparkles } from "lucide-react";
+import { ArrowLeft, BookOpen, GraduationCap, FlaskConical, Globe, Calculator, Code, Palette, TrendingUp, FileText, Filter, Edit2, Trash2, Save, X as XIcon, Image as ImageIcon, BarChart2, Table as TableIcon, Scissors, Sparkles, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { authService } from "@/lib/auth";
 import { EDUCATION_LEVELS, EducationLevel, getSubjectsForLevel } from "@/lib/education-config";
 import VisualContentViewer from "@/components/VisualContentViewer";
@@ -10,6 +10,190 @@ import { QuestionVariationPanel, QuestionImprovementModal } from "@/components/a
 import { toast } from 'react-hot-toast';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
+// Custom Confirmation Modal Component
+interface ConfirmModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  type?: 'danger' | 'warning' | 'info';
+  confirmCount?: number;
+}
+
+function ConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  type = 'danger',
+  confirmCount
+}: ConfirmModalProps) {
+  console.log('[ConfirmModal] Render:', { isOpen, title, type });
+  
+  if (!isOpen) return null;
+
+  const colors = {
+    danger: {
+      bg: 'from-red-500 to-red-600',
+      icon: 'text-red-600',
+      button: 'from-red-500 to-red-600 hover:from-red-600 hover:to-red-700',
+      iconBg: 'bg-red-100'
+    },
+    warning: {
+      bg: 'from-yellow-500 to-orange-500',
+      icon: 'text-yellow-600',
+      button: 'from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600',
+      iconBg: 'bg-yellow-100'
+    },
+    info: {
+      bg: 'from-blue-500 to-blue-600',
+      icon: 'text-blue-600',
+      button: 'from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700',
+      iconBg: 'bg-blue-100'
+    }
+  };
+
+  const color = colors[type];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+        {/* Header with gradient */}
+        <div className={`bg-gradient-to-r ${color.bg} px-6 py-4`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-xl ${color.iconBg} flex items-center justify-center`}>
+              {type === 'danger' ? (
+                <AlertTriangle className={`w-6 h-6 ${color.icon}`} />
+              ) : type === 'warning' ? (
+                <AlertTriangle className={`w-6 h-6 ${color.icon}`} />
+              ) : (
+                <CheckCircle2 className={`w-6 h-6 ${color.icon}`} />
+              )}
+            </div>
+            <h3 className="text-xl font-bold text-white">{title}</h3>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          <p className="text-gray-700 leading-relaxed mb-6">{message}</p>
+          
+          {confirmCount !== undefined && (
+            <div className="mb-6 p-4 bg-gray-50 rounded-lg border-2 border-gray-200">
+              <p className="text-center">
+                <span className="text-3xl font-bold text-gray-900">{confirmCount}</span>
+                <span className="text-gray-600 ml-2">item{confirmCount !== 1 ? 's' : ''} will be affected</span>
+              </p>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 px-4 py-3 rounded-xl border-2 border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 hover:border-gray-400 transition-all"
+            >
+              {cancelText}
+            </button>
+            <button
+              onClick={async () => {
+                await onConfirm();
+                onClose();
+              }}
+              className={`flex-1 px-4 py-3 rounded-xl bg-gradient-to-r ${color.button} text-white font-semibold shadow-lg hover:shadow-xl transition-all transform hover:scale-105 active:scale-95`}
+            >
+              {confirmText}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Custom Alert Modal Component
+interface AlertModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  message: string;
+  type?: 'error' | 'success' | 'warning' | 'info';
+}
+
+function AlertModal({
+  isOpen,
+  onClose,
+  title,
+  message,
+  type = 'error'
+}: AlertModalProps) {
+  if (!isOpen) return null;
+
+  const styles = {
+    error: {
+      gradient: 'from-red-500 to-red-600',
+      iconBg: 'bg-red-100',
+      icon: <XCircle className="w-6 h-6 text-red-600" />,
+      button: 'from-red-500 to-red-600 hover:from-red-600 hover:to-red-700'
+    },
+    success: {
+      gradient: 'from-green-500 to-green-600',
+      iconBg: 'bg-green-100',
+      icon: <CheckCircle2 className="w-6 h-6 text-green-600" />,
+      button: 'from-green-500 to-green-600 hover:from-green-600 hover:to-green-700'
+    },
+    warning: {
+      gradient: 'from-yellow-500 to-orange-500',
+      iconBg: 'bg-yellow-100',
+      icon: <AlertTriangle className="w-6 h-6 text-yellow-600" />,
+      button: 'from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600'
+    },
+    info: {
+      gradient: 'from-blue-500 to-blue-600',
+      iconBg: 'bg-blue-100',
+      icon: <AlertTriangle className="w-6 h-6 text-blue-600" />,
+      button: 'from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700'
+    }
+  };
+
+  const style = styles[type];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className={`bg-gradient-to-r ${style.gradient} px-6 py-4`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-xl ${style.iconBg} flex items-center justify-center`}>
+              {style.icon}
+            </div>
+            <h3 className="text-xl font-bold text-white">{title}</h3>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          <p className="text-gray-700 leading-relaxed mb-6">{message}</p>
+
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className={`w-full px-4 py-3 rounded-xl bg-gradient-to-r ${style.button} text-white font-semibold shadow-lg hover:shadow-xl transition-all transform hover:scale-105 active:scale-95`}
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface QuestionFormData {
   id: string;
@@ -217,6 +401,38 @@ export default function QuestionsPage() {
   const [expandedVisualContent, setExpandedVisualContent] = useState<Set<string>>(new Set());
   const [manualSelectorOpen, setManualSelectorOpen] = useState<string | null>(null);
   const [improveModalQuestionId, setImproveModalQuestionId] = useState<string | null>(null);
+  
+  // Bulk delete state
+  const [selectedQuestions, setSelectedQuestions] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  
+  // Modal states
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: 'danger' | 'warning' | 'info';
+    confirmText?: string;
+    confirmCount?: number;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const [alertModal, setAlertModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type?: 'error' | 'success' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'error',
+  });
 
   // Get the question for improvement modal - must be at top level (Rules of Hooks)
   const improveQuestion = useMemo(() => {
@@ -433,7 +649,12 @@ export default function QuestionsPage() {
 
     // Validation
     if (!editFormData.questionText.trim()) {
-      alert('Question text cannot be empty');
+      setAlertModal({
+        isOpen: true,
+        title: 'Validation Error',
+        message: 'Question text cannot be empty. Please enter a question.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -441,11 +662,21 @@ export default function QuestionsPage() {
     if (editFormData.questionType === 'mcq') {
       const filledOptions = editFormData.options.filter(opt => opt.trim());
       if (filledOptions.length < 2) {
-        alert('MCQ questions must have at least 2 options');
+        setAlertModal({
+          isOpen: true,
+          title: 'Validation Error',
+          message: 'MCQ questions must have at least 2 options. Please add more options.',
+          type: 'warning'
+        });
         return;
       }
       if (!editFormData.correctAnswer.trim()) {
-        alert('Please select or enter the correct answer for MCQ');
+        setAlertModal({
+          isOpen: true,
+          title: 'Validation Error',
+          message: 'Please select or enter the correct answer for this MCQ question.',
+          type: 'warning'
+        });
         return;
       }
     }
@@ -498,11 +729,21 @@ export default function QuestionsPage() {
         setEditingQuestion(null);
       } else {
         const error = await response.json();
-        alert(`Failed to update question: ${error.message || 'Unknown error'}`);
+        setAlertModal({
+          isOpen: true,
+          title: 'Update Failed',
+          message: `Failed to update question: ${error.message || 'Unknown error'}. Please try again.`,
+          type: 'error'
+        });
       }
     } catch (error) {
       console.error('Failed to update question:', error);
-      alert('Failed to update question. Please try again.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Update Failed',
+        message: 'Failed to update question. Please check your connection and try again.',
+        type: 'error'
+      });
     }
   };
 
@@ -533,7 +774,12 @@ export default function QuestionsPage() {
 
   const removeOption = (index: number) => {
     if (editFormData.options.length <= 2) {
-      alert('MCQ questions must have at least 2 options');
+      setAlertModal({
+        isOpen: true,
+        title: 'Cannot Remove Option',
+        message: 'MCQ questions must have at least 2 options. Please keep a minimum of 2 options.',
+        type: 'warning'
+      });
       return;
     }
     setEditFormData(prev => ({
@@ -544,31 +790,129 @@ export default function QuestionsPage() {
 
   // Delete question (soft delete)
   const handleDeleteQuestion = async (questionId: string) => {
-    if (!confirm('Are you sure you want to delete this question?')) {
+    console.log('[DeleteQuestion] Button clicked for question:', questionId);
+    
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Question',
+      message: 'Are you sure you want to delete this question? This action cannot be undone.',
+      type: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        console.log('[DeleteQuestion] Confirm clicked, starting delete...');
+        const token = authService.getToken();
+        if (!token) {
+          console.error('[DeleteQuestion] No auth token');
+          return;
+        }
+
+        setDeletingQuestion(questionId);
+        try {
+          const response = await fetch(`${API_URL}/exam-questions/${questionId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (response.ok) {
+            console.log('[DeleteQuestion] Delete successful');
+            // Remove from local state
+            setExtractedQuestions(prev => prev.filter(q => q.id !== questionId));
+            toast.success('Question deleted successfully');
+          } else {
+            console.error('[DeleteQuestion] Delete failed:', response.status);
+            toast.error('Failed to delete question');
+          }
+        } catch (error) {
+          console.error('[DeleteQuestion] Delete error:', error);
+          toast.error('Failed to delete question');
+        } finally {
+          setDeletingQuestion(null);
+        }
+      }
+    });
+    
+    console.log('[DeleteQuestion] Modal state set to open');
+  };
+
+  // Bulk delete questions
+  const handleBulkDelete = async () => {
+    if (selectedQuestions.size === 0) {
+      toast.error('No questions selected');
       return;
     }
 
-    const token = authService.getToken();
-    if (!token) return;
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Multiple Questions',
+      message: `Are you sure you want to delete ${selectedQuestions.size} question${selectedQuestions.size !== 1 ? 's' : ''}? This action cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete All',
+      confirmCount: selectedQuestions.size,
+      onConfirm: async () => {
+        const token = authService.getToken();
+        if (!token) return;
 
-    setDeletingQuestion(questionId);
-    try {
-      const response = await fetch(`${API_URL}/exam-questions/${questionId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+        setBulkDeleting(true);
+        try {
+          const deletePromises = Array.from(selectedQuestions).map(questionId =>
+            fetch(`${API_URL}/exam-questions/${questionId}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${token}` },
+            })
+          );
 
-      if (response.ok) {
-        // Remove from local state
-        setExtractedQuestions(prev => prev.filter(q => q.id !== questionId));
-      } else {
-        alert('Failed to delete question');
+          const results = await Promise.allSettled(deletePromises);
+          
+          // Check which ones actually succeeded (HTTP 200-299)
+          const successfulIds = new Set<string>();
+          Array.from(selectedQuestions).forEach((questionId, index) => {
+            const result = results[index];
+            if (result.status === 'fulfilled' && result.value.ok) {
+              successfulIds.add(questionId);
+            }
+          });
+
+          const successCount = successfulIds.size;
+          const failCount = selectedQuestions.size - successCount;
+
+          // Remove only successfully deleted questions from local state
+          setExtractedQuestions(prev => prev.filter(q => !successfulIds.has(q.id)));
+          setSelectedQuestions(new Set());
+
+          if (failCount === 0) {
+            toast.success(`Successfully deleted ${successCount} question${successCount !== 1 ? 's' : ''}`);
+          } else {
+            toast.error(`Deleted ${successCount} question${successCount !== 1 ? 's' : ''}, ${failCount} failed`);
+          }
+        } catch (error) {
+          console.error('Failed to bulk delete:', error);
+          toast.error('Failed to delete questions');
+        } finally {
+          setBulkDeleting(false);
+        }
       }
-    } catch (error) {
-      console.error('Failed to delete question:', error);
-      alert('Failed to delete question');
-    } finally {
-      setDeletingQuestion(null);
+    });
+  };
+
+  // Toggle question selection
+  const toggleQuestionSelection = (questionId: string) => {
+    setSelectedQuestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
+  };
+
+  // Select all questions in current view
+  const toggleSelectAll = () => {
+    if (selectedQuestions.size === filteredQuestions.length && filteredQuestions.length > 0) {
+      setSelectedQuestions(new Set());
+    } else {
+      setSelectedQuestions(new Set(filteredQuestions.map(q => q.id)));
     }
   };
 
@@ -842,16 +1186,98 @@ export default function QuestionsPage() {
               <Icon className="w-8 h-8 text-white" />
             </div>
             <div>
-              <h1 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-2xl font-bold text-[#0d1b3e]">
-                {subject.name}
-              </h1>
-              <p className="text-sm text-[#8899bb] mt-1">{subject.arabicName} • {filteredQuestions.length} questions</p>
+              <p className="text-sm text-[#8899bb]">{subject.arabicName} • {filteredQuestions.length} questions</p>
             </div>
           </div>
         </div>
 
         {/* Questions List */}
         <div className="space-y-3">
+          {/* Bulk Actions Bar - Sticky */}
+          {filteredQuestions.length > 0 && (
+            <div className="sticky top-0 z-10 bg-white rounded-xl border-2 border-[#edf0f7] shadow-lg overflow-hidden">
+              <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 px-6 py-4 border-b border-indigo-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-3 cursor-pointer group">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestions.size === filteredQuestions.length && filteredQuestions.length > 0}
+                          onChange={toggleSelectAll}
+                          className="w-5 h-5 text-indigo-600 border-2 border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all cursor-pointer"
+                        />
+                        {selectedQuestions.size > 0 && selectedQuestions.size < filteredQuestions.length && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div className="w-2.5 h-2.5 bg-indigo-600 rounded-sm"></div>
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-sm font-semibold text-gray-700 group-hover:text-gray-900 transition-colors">
+                        Select All
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 border border-indigo-200">
+                        {filteredQuestions.length}
+                      </span>
+                    </label>
+                    
+                    {selectedQuestions.size > 0 && (
+                      <div className="flex items-center gap-2 pl-4 border-l-2 border-indigo-200">
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 shadow-sm">
+                          <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                          <span className="text-sm font-bold text-indigo-700">
+                            {selectedQuestions.size} selected
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setSelectedQuestions(new Set())}
+                          className="text-xs text-gray-500 hover:text-gray-700 font-medium underline underline-offset-2 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {selectedQuestions.size > 0 && (
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={bulkDeleting}
+                      className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg transition-all transform hover:scale-105 active:scale-95 text-sm"
+                    >
+                      {bulkDeleting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>Deleting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-4 h-4" />
+                          <span>Delete Selected</span>
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-white/20 text-white border border-white/30">
+                            {selectedQuestions.size}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              {/* Selection info bar */}
+              {selectedQuestions.size > 0 && (
+                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
+                  <p className="text-xs text-blue-700">
+                    <span className="font-semibold">{selectedQuestions.size}</span> of <span className="font-semibold">{filteredQuestions.length}</span> questions selected
+                    {selectedQuestions.size === filteredQuestions.length && (
+                      <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-200 text-blue-800 font-semibold">All selected</span>
+                    )}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {filteredQuestions.length === 0 ? (
             <div className="bg-white rounded-xl border border-[#edf0f7] p-12 text-center">
               <FileText className="w-12 h-12 text-[#c0d0e8] mx-auto mb-4" />
@@ -863,7 +1289,21 @@ export default function QuestionsPage() {
                 key={q.id}
                 className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-md transition-all"
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  {/* Checkbox for bulk selection */}
+                  <div className="pt-2 relative group">
+                    <input
+                      type="checkbox"
+                      checked={selectedQuestions.has(q.id)}
+                      onChange={() => toggleQuestionSelection(q.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-5 h-5 text-indigo-600 border-2 border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 cursor-pointer transition-all hover:border-indigo-400"
+                    />
+                    {selectedQuestions.has(q.id) && (
+                      <div className="absolute -inset-1 bg-indigo-100 rounded-lg opacity-20 animate-pulse pointer-events-none"></div>
+                    )}
+                  </div>
+
                   <div className="flex-1">
                     {editingQuestion === q.id ? (
                       // Comprehensive Edit mode
@@ -1250,6 +1690,26 @@ export default function QuestionsPage() {
           )}
         </div>
       </div>
+      
+      {/* Custom Modals for Subject View */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        type={confirmModal.type}
+        confirmText={confirmModal.confirmText}
+        confirmCount={confirmModal.confirmCount}
+      />
+      
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        onClose={() => setAlertModal(prev => ({ ...prev, isOpen: false }))}
+        title={alertModal.title}
+        message={alertModal.message}
+        type={alertModal.type}
+      />
       </>
     );
   }
@@ -1334,13 +1794,6 @@ export default function QuestionsPage() {
       />
       
       <div>
-      <div className="mb-6">
-        <h1 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-2xl font-bold text-[#0d1b3e]">
-          Question Bank
-        </h1>
-        <p className="text-sm text-[#8899bb] mt-1">Browse questions by subject from extracted exams</p>
-      </div>
-
       {/* Level Filter */}
       <div className="mb-6 flex items-center gap-3">
         <div className="flex items-center gap-2 text-sm text-[#8899bb]">
@@ -1442,6 +1895,26 @@ export default function QuestionsPage() {
         </div>
       )}
     </div>
+    
+    {/* Custom Modals */}
+    <ConfirmModal
+      isOpen={confirmModal.isOpen}
+      onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+      onConfirm={confirmModal.onConfirm}
+      title={confirmModal.title}
+      message={confirmModal.message}
+      type={confirmModal.type}
+      confirmText={confirmModal.confirmText}
+      confirmCount={confirmModal.confirmCount}
+    />
+    
+    <AlertModal
+      isOpen={alertModal.isOpen}
+      onClose={() => setAlertModal(prev => ({ ...prev, isOpen: false }))}
+      title={alertModal.title}
+      message={alertModal.message}
+      type={alertModal.type}
+    />
     </>
   );
 }

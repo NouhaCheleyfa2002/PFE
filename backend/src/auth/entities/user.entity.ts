@@ -9,8 +9,15 @@ export class UserEntity {
   @Index()
   email: string;
 
-  @Column()
+  @Column({ nullable: true })
   password: string;
+
+  @Column({ name: 'google_id', nullable: true, unique: true })
+  @Index()
+  googleId?: string;
+
+  @Column({ name: 'profile_picture', nullable: true })
+  profilePicture?: string;
 
   @Column()
   fullName: string;

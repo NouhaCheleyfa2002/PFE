@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { Search, Plus, Check, X, Image as ImageIcon, Eye } from "lucide-react";
+import { Search, Plus, Check, X, Image as ImageIcon, Eye, MessageCircle } from "lucide-react";
 import { Question, QuestionType } from "@/lib/types/question";
 import { useExam } from "@/lib/exam-context";
 import { authService } from "@/lib/auth";
@@ -51,24 +51,34 @@ export default function QuestionBank() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [activeType, setActiveType] = useState<FilterType>("all");
+  const [levelFilter, setLevelFilter] = useState<string>("all");
   const [subjectFilter, setSubjectFilter] = useState<string>("all");
   const [diagramModalOpen, setDiagramModalOpen] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
-  const { addQuestion, isQuestionAdded, exam, canAddQuestion, pointsRemaining } = useExam();
+  const { addQuestion, isQuestionAdded, exam, canAddQuestion, pointsRemaining, activeEditors } = useExam();
 
-  // Get unique subjects from questions
-  const availableSubjects = useMemo(() => {
-    const subjects = new Set(questions.map(q => q.subject).filter(Boolean));
-    return Array.from(subjects).sort();
+  // Get unique levels from questions
+  const availableLevels = useMemo(() => {
+    const levels = new Set(questions.map(q => q.level).filter(Boolean));
+    return Array.from(levels).sort();
   }, [questions]);
+
+  // Get unique subjects from questions (filtered by level if selected)
+  const availableSubjects = useMemo(() => {
+    const filteredByLevel = levelFilter === "all" 
+      ? questions 
+      : questions.filter(q => q.level === levelFilter);
+    const subjects = new Set(filteredByLevel.map(q => q.subject).filter(Boolean));
+    return Array.from(subjects).sort();
+  }, [questions, levelFilter]);
 
   // Fetch questions from /exam-questions API
   useEffect(() => {
     const fetchQuestions = async () => {
       const token = authService.getToken();
       if (!token) {
-        console.log('[QuestionBank] No auth token found');
+        console.error('[QuestionBank] No auth token found');
         setLoading(false);
         return;
       }
@@ -80,9 +90,20 @@ export default function QuestionBank() {
           headers: { Authorization: `Bearer ${token}` },
         });
 
+        console.log('[QuestionBank] Response status:', response.status);
+
         if (response.ok) {
           const data = await response.json();
+          console.log('[QuestionBank] Full API Response:', data);
+          console.log('[QuestionBank] Questions array:', data.questions);
           console.log('[QuestionBank] Questions count:', data.questions?.length || 0);
+          
+          if (!data.questions || !Array.isArray(data.questions)) {
+            console.error('[QuestionBank] Invalid response format - questions is not an array:', data);
+            setQuestions([]);
+            setLoading(false);
+            return;
+          }
           
           // Map API questions to Question type
           const mapped: Question[] = (data.questions || []).map((q: any) => {
@@ -177,13 +198,32 @@ export default function QuestionBank() {
       q.category.toLowerCase().includes(search.toLowerCase()) ||
       (q.subject && q.subject.toLowerCase().includes(search.toLowerCase()));
     const matchesType = activeType === "all" || q.type === (activeType as QuestionType);
+    const matchesLevel = levelFilter === "all" || q.level === levelFilter;
     const matchesSubject = subjectFilter === "all" || q.subject === subjectFilter;
     
-    // Filter by selected class level if one is selected
-    const matchesLevel = !exam.classLevel || q.level === exam.classLevel;
+    // Don't filter by level - show all questions regardless of exam's selected level
+    // Teachers can add questions from any level to their exam
     
-    return matchesSearch && matchesType && matchesSubject && matchesLevel;
+    return matchesSearch && matchesType && matchesLevel && matchesSubject;
   });
+
+  // Debug filtering
+  useEffect(() => {
+    console.log('[QuestionBank] Filter Debug:', {
+      totalQuestions: questions.length,
+      filteredQuestions: filtered.length,
+      activeType,
+      levelFilter,
+      subjectFilter,
+      search,
+      sampleQuestion: questions[0] ? {
+        text: questions[0].text.substring(0, 50),
+        type: questions[0].type,
+        level: questions[0].level,
+        subject: questions[0].subject,
+      } : null,
+    });
+  }, [questions, filtered.length, activeType, levelFilter, subjectFilter, search]);
 
   const handleAddQuestion = (q: Question) => {
     if (!canAddQuestion(q.points)) {
@@ -221,6 +261,24 @@ export default function QuestionBank() {
       {/* Header */}
       <div className="p-4 border-b border-[#edf0f7] flex-shrink-0">
         <h3 className="text-sm font-semibold text-[#0d1b3e] mb-3">Question Bank</h3>
+        
+        {/* Level Filter */}
+        {availableLevels.length > 0 && (
+          <select
+            value={levelFilter}
+            onChange={(e) => {
+              setLevelFilter(e.target.value);
+              // Reset subject filter when level changes
+              setSubjectFilter("all");
+            }}
+            className="w-full px-3 py-2 rounded-lg border border-[#edf0f7] text-xs outline-none focus:border-[#63b3ed] transition-all mb-2 bg-white text-[#0d1b3e]"
+          >
+            <option value="all">All Levels</option>
+            {availableLevels.map(level => (
+              <option key={level} value={level}>{level}</option>
+            ))}
+          </select>
+        )}
         
         {/* Subject Filter */}
         {availableSubjects.length > 0 && (
@@ -316,6 +374,9 @@ export default function QuestionBank() {
             const wouldExceed = !canAddQuestion(q.points);
             const canAdd = !added && !wouldExceed;
             
+            // Check if question is being edited by a collaborator
+            const editor = activeEditors.get(q.id);
+            
             return (
               <div
                 key={q.id}
@@ -324,6 +385,8 @@ export default function QuestionBank() {
                     ? "border-green-300 bg-green-50"
                     : wouldExceed
                     ? "border-red-200 bg-red-50 opacity-60"
+                    : editor
+                    ? "border-blue-300 bg-blue-50"
                     : "border-[#edf0f7] bg-[#f9faff] hover:border-[#63b3ed] hover:shadow-sm"
                 }`}
                 title={wouldExceed ? `Adding this question would exceed the points limit by ${Math.abs(pointsRemaining - q.points)} pts` : undefined}
@@ -334,6 +397,24 @@ export default function QuestionBank() {
                   </div>
                 )}
                 
+                {/* Collaborator editing indicator */}
+                {editor && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div 
+                        className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium z-10"
+                        style={{ backgroundColor: editor.color, color: 'white' }}
+                      >
+                        <MessageCircle className="w-3 h-3" />
+                        <span>{editor.userName.split(' ')[0]}</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{editor.userName} is editing this question</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                
                 {/* View Diagram button for questions with images */}
                 {q.imageUrl && (
                   <button
@@ -341,7 +422,7 @@ export default function QuestionBank() {
                       e.stopPropagation();
                       setDiagramModalOpen(q.id);
                     }}
-                    className="absolute top-2 right-2 px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs flex items-center gap-1 transition-colors z-10"
+                    className={`absolute top-2 ${editor ? 'right-2' : 'right-2'} px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs flex items-center gap-1 transition-colors z-10`}
                   >
                     <Eye className="w-3 h-3" />
                     View Diagram

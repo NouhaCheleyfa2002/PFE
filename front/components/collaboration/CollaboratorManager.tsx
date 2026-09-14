@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Users, Plus, X, Settings, Check, Clock } from "lucide-react";
+import { Users, Plus, X, Settings, Check, Clock, Crown, Mail } from "lucide-react";
 import { toast } from "react-hot-toast";
 
 interface Collaborator {
@@ -18,18 +18,21 @@ interface Collaborator {
   };
   invitedAt: Date;
   acceptedAt?: Date;
+  isHost?: boolean; // Flag for the original creator/owner
 }
 
 interface CollaboratorManagerProps {
   resourceId: string;
   resourceType: 'document' | 'exam';
   isOwner: boolean;
+  ownerId?: string; // The original owner/host ID
 }
 
 export default function CollaboratorManager({ 
   resourceId, 
   resourceType,
-  isOwner 
+  isOwner,
+  ownerId
 }: CollaboratorManagerProps) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [showDialog, setShowDialog] = useState(false);
@@ -41,21 +44,100 @@ export default function CollaboratorManager({
 
   const fetchCollaborators = async () => {
     try {
+      const token = localStorage.getItem('auth_token');
+      
+      // Get current user ID from token
+      let currentUserId = '';
+      if (token) {
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          currentUserId = payload.sub || payload.userId || "";
+        } catch (err) {
+          console.error('Failed to parse token:', err);
+        }
+      }
+      
+      // Fetch collaborators
       const endpoint = resourceType === 'document' 
         ? `/collaboration/resources/${resourceId}/collaborators`
         : `/collaboration/exams/${resourceId}/collaborators`;
       
-      const token = localStorage.getItem('auth_token');
       const response = await fetch(`http://localhost:3000${endpoint}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setCollaborators(data);
+      if (!response.ok) {
+        console.error('Failed to fetch collaborators:', response.status);
+        setLoading(false);
+        return;
       }
+      
+      const data = await response.json();
+      console.log('[CollaboratorManager] Raw collaborators data:', data);
+      
+      // Filter out current user from collaborators list
+      let otherCollaborators = data.filter((collab: Collaborator) => collab.userId !== currentUserId);
+      
+      // If we have an ownerId and it's NOT the current user, fetch owner info
+      if (ownerId && ownerId !== currentUserId && resourceType === 'exam') {
+        // Check if owner is already in the collaborators list
+        const ownerInList = otherCollaborators.some((c: Collaborator) => c.userId === ownerId);
+        
+        if (!ownerInList) {
+          console.log('[CollaboratorManager] Owner not in collaborators list, fetching exam data...');
+          
+          // Fetch exam data which includes owner relation
+          try {
+            const examResponse = await fetch(`http://localhost:3000/exams/${resourceId}`, {
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            
+            if (examResponse.ok) {
+              const examData = await examResponse.json();
+              console.log('[CollaboratorManager] Exam data:', examData);
+              
+              // Extract owner info from exam data
+              if (examData.owner) {
+                console.log('[CollaboratorManager] Adding owner to list:', examData.owner);
+                
+                // Add owner to the beginning of the list
+                otherCollaborators.unshift({
+                  id: `owner-${ownerId}`,
+                  userId: ownerId,
+                  userName: examData.owner.fullName || examData.owner.name || examData.owner.email || 'Owner',
+                  userEmail: examData.owner.email,
+                  role: 'owner',
+                  status: 'accepted',
+                  invitedAt: examData.createdAt,
+                  isHost: true,
+                });
+              }
+            } else {
+              console.error('[CollaboratorManager] Failed to fetch exam:', examResponse.status);
+            }
+          } catch (err) {
+            console.error('[CollaboratorManager] Failed to fetch owner info:', err);
+          }
+        }
+      }
+      
+      // Mark the host (owner)
+      const collaboratorsWithHost = otherCollaborators.map((collab: Collaborator) => ({
+        ...collab,
+        isHost: collab.userId === ownerId || collab.role === 'owner',
+      }));
+      
+      console.log('[CollaboratorManager] Final collaborators list:', {
+        total: data.length,
+        afterFiltering: collaboratorsWithHost.length,
+        currentUserId,
+        ownerId,
+        collaborators: collaboratorsWithHost,
+      });
+      
+      setCollaborators(collaboratorsWithHost);
     } catch (error) {
       console.error('Failed to fetch collaborators:', error);
     } finally {
@@ -138,15 +220,14 @@ export default function CollaboratorManager({
           <Users className="w-5 h-5" />
           Collaborators ({collaborators.filter(c => c.status === 'accepted').length})
         </h3>
-        {isOwner && (
-          <button
-            onClick={() => setShowDialog(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-          >
-            <Plus className="w-4 h-4" />
-            Add Collaborator
-          </button>
-        )}
+        {/* Collaborators can also invite others, not just the host */}
+        <button
+          onClick={() => setShowDialog(true)}
+          className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+        >
+          <Plus className="w-4 h-4" />
+          Add Collaborator
+        </button>
       </div>
 
       {/* Collaborators List */}
@@ -178,6 +259,12 @@ export default function CollaboratorManager({
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-gray-900">{collab.userName || collab.userEmail || 'Unknown User'}</p>
+                      {collab.isHost && (
+                        <span className="px-2 py-0.5 text-xs font-bold bg-gradient-to-r from-purple-100 to-pink-100 text-purple-700 rounded-full border border-purple-200 flex items-center gap-1">
+                          <Crown className="w-3 h-3" />
+                          HOST
+                        </span>
+                      )}
                       {getStatusIcon(collab.status)}
                     </div>
                     <div className="flex items-center gap-2 mt-1">
@@ -187,8 +274,8 @@ export default function CollaboratorManager({
                       {collab.status === 'pending' && (
                         <span className="text-xs text-gray-500">Invitation pending</span>
                       )}
-                      {collab.permissions?.revenue && (
-                        <span className="text-xs text-gray-500">
+                      {collab.permissions?.revenue !== undefined && collab.permissions.revenue > 0 && (
+                        <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
                           {collab.permissions.revenue}% revenue
                         </span>
                       )}
@@ -196,7 +283,8 @@ export default function CollaboratorManager({
                   </div>
                 </div>
 
-                {isOwner && collab.role !== 'owner' && (
+                {/* Only host can remove collaborators, and host cannot be removed */}
+                {isOwner && !collab.isHost && collab.role !== 'owner' && (
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleRemove(collab.id)}
@@ -206,6 +294,9 @@ export default function CollaboratorManager({
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+                )}
+                {collab.isHost && (
+                  <span className="text-xs text-gray-400 italic">Cannot be removed</span>
                 )}
               </div>
             );
@@ -296,12 +387,15 @@ function AddCollaboratorDialog({
         body: JSON.stringify({
           userId: selectedUser.id,
           role,
-          permissions: resourceType === 'document' ? permissions : undefined,
+          permissions: permissions, // Send permissions for both documents and exams
         }),
       });
 
       if (response.ok) {
-        toast.success('Collaborator invited successfully');
+        toast.success('✅ Collaborator invited! They will receive an email notification', {
+          duration: 5000,
+          icon: <Mail className="w-5 h-5" />,
+        });
         onSuccess();
       } else {
         const error = await response.json();
@@ -394,29 +488,27 @@ function AddCollaboratorDialog({
           </div>
         )}
 
-        {/* Permissions for Documents */}
-        {selectedUser && resourceType === 'document' && role !== 'viewer' && (
+        {/* Permissions for Documents OR Exams */}
+        {selectedUser && role !== 'viewer' && (
           <div className="mb-4 space-y-3 p-3 bg-gray-50 rounded-lg">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={permissions.edit}
-                onChange={(e) => setPermissions({ ...permissions, edit: e.target.checked })}
-                className="rounded"
-              />
-              <span className="text-sm">Can edit metadata and upload versions</span>
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={permissions.analytics}
-                onChange={(e) => setPermissions({ ...permissions, analytics: e.target.checked })}
-                className="rounded"
-              />
-              <span className="text-sm">Can view analytics</span>
-            </label>
+            {resourceType === 'document' && (
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={permissions.edit}
+                  onChange={(e) => setPermissions({ ...permissions, edit: e.target.checked })}
+                  className="rounded"
+                />
+                <span className="text-sm">Can edit metadata and upload versions</span>
+              </label>
+            )}
             <div>
-              <label className="text-sm block mb-1">Revenue share (%)</label>
+              <label className="text-sm block mb-1 font-medium">Revenue share (%)</label>
+              <p className="text-xs text-gray-500 mb-2">
+                {resourceType === 'exam' 
+                  ? 'Percentage of sales revenue this collaborator will receive (applies only to paid exams)'
+                  : 'Percentage of sales revenue this collaborator will receive'}
+              </p>
               <input
                 type="number"
                 min="0"
@@ -424,7 +516,11 @@ function AddCollaboratorDialog({
                 value={permissions.revenue}
                 onChange={(e) => setPermissions({ ...permissions, revenue: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                placeholder="0"
               />
+              <p className="text-xs text-gray-400 mt-1">
+                You can set this now or adjust it later before publishing
+              </p>
             </div>
           </div>
         )}

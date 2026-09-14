@@ -33,6 +33,8 @@ export default function InvitationsPage() {
   const fetchInvitations = async () => {
     try {
       const token = localStorage.getItem('auth_token');
+      console.log('[Invitations] Fetching invitations...');
+      
       const response = await fetch('http://localhost:3000/collaboration/invitations', {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -41,10 +43,15 @@ export default function InvitationsPage() {
 
       if (response.ok) {
         const data = await response.json();
+        console.log('[Invitations] Received data:', data);
+        console.log('[Invitations] Resources count:', data.resources?.length || 0);
+        console.log('[Invitations] Exams count:', data.exams?.length || 0);
         setInvitations(data);
+      } else {
+        console.error('[Invitations] Failed to fetch:', response.status);
       }
     } catch (error) {
-      console.error('Failed to fetch invitations:', error);
+      console.error('[Invitations] Failed to fetch invitations:', error);
     } finally {
       setLoading(false);
     }
@@ -57,6 +64,10 @@ export default function InvitationsPage() {
 
   const allInvitations = [...invitations.resources, ...invitations.exams];
   const totalCount = allInvitations.length;
+
+  console.log('[Invitations] State:', invitations);
+  console.log('[Invitations] All invitations combined:', allInvitations);
+  console.log('[Invitations] Total count:', totalCount);
 
   const formatDate = (date: Date | string) => {
     return new Date(date).toLocaleDateString('en-US', {
@@ -109,7 +120,9 @@ export default function InvitationsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {allInvitations.map((invitation) => (
+            {allInvitations.map((invitation, index) => {
+              console.log(`[Invitations] Rendering invitation ${index}:`, invitation);
+              return (
               <div
                 key={invitation.id}
                 className="bg-white rounded-xl shadow-md hover:shadow-xl transition-shadow border border-gray-200 overflow-hidden"
@@ -188,7 +201,8 @@ export default function InvitationsPage() {
                   </div>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
       </div>

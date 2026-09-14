@@ -4,9 +4,11 @@ import { Repository } from 'typeorm';
 import { VerificationRequestEntity, VerificationStatus } from './entities/verification-request.entity';
 import { UserEntity } from '../auth/entities/user.entity';
 import { SubmitVerificationDto, ReviewVerificationDto } from './dto/verification.dto';
+import { AIVerificationService } from './ai-verification.service';
 import { v4 as uuidv4 } from 'uuid';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { UserNotificationsService } from '../user-notifications/user-notifications.service';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class VerificationService {
@@ -17,6 +19,8 @@ export class VerificationService {
     private userRepo: Repository<UserEntity>,
     private notificationsGateway: NotificationsGateway,
     private userNotificationsService: UserNotificationsService,
+    private mailService: MailService,
+    private aiVerificationService: AIVerificationService,
   ) {}
 
   /**
@@ -52,19 +56,37 @@ export class VerificationService {
       ? this.generateVerificationCode() 
       : null;
 
+    // Ensure fullName is not empty - use user's fullName as fallback
+    const fullName = dto.fullName && dto.fullName.trim() && dto.fullName !== 'Unknown'
+      ? dto.fullName 
+      : (user?.fullName || 'Unknown User');
+
+    console.log(`Creating verification request for user ${userId}, fullName: "${fullName}"`);
+
     const request = this.verificationRepo.create({
       userId,
-      fullName: dto.fullName,
+      fullName: fullName,
       institution: dto.institution,
       teachingLevel: dto.teachingLevel,
       subjects: dto.subjects,
       documentUrls: dto.documentUrls,
       verificationVideoUrl: dto.verificationVideoUrl || null,
       verificationCode: verificationCode,
+      idNumber: dto.idNumber || null,
       status: VerificationStatus.PENDING,
     });
 
     const savedRequest = await this.verificationRepo.save(request);
+
+    // Send verification received email (user already fetched above)
+    if (user) {
+      try {
+        await this.mailService.sendTeacherVerificationReceived(user.email, user.fullName);
+        console.log(`Verification received email sent to: ${user.email}`);
+      } catch (error) {
+        console.error('Failed to send verification received email:', error);
+      }
+    }
 
     // Send real-time notification to all admins
     this.notificationsGateway.sendToAdmins({
@@ -96,6 +118,12 @@ export class VerificationService {
       // Silently fail database notification - WebSocket is primary
       console.error('Failed to create database notification:', error);
     }
+
+    // Trigger AI verification analysis (async - don't wait)
+    this.aiVerificationService.analyzeVerificationRequest(savedRequest.id)
+      .catch(error => {
+        console.error(`AI verification analysis failed for request ${savedRequest.id}:`, error);
+      });
 
     return savedRequest;
   }
@@ -139,26 +167,66 @@ export class VerificationService {
     const query = this.verificationRepo
       .createQueryBuilder('vr')
       .leftJoinAndSelect('vr.user', 'user')
-      .leftJoinAndSelect('vr.reviewer', 'reviewer');
+      .leftJoinAndSelect('vr.reviewer', 'reviewer')
+      .select([
+        'vr',
+        'user.id',
+        'user.email',
+        'user.fullName',
+        'user.createdAt',
+        'reviewer.id',
+        'reviewer.email',
+        'reviewer.fullName',
+      ]);
 
     if (status) {
       query.where('vr.status = :status', { status });
     }
 
-    return query.orderBy('vr.submittedAt', 'DESC').getMany();
+    const requests = await query.orderBy('vr.submittedAt', 'DESC').getMany();
+
+    // Fallback: if verification request fullName is empty, use user's fullName
+    return requests.map(request => {
+      // Use user.fullName if request.fullName is null, undefined, or empty string
+      const finalFullName = (request.fullName && request.fullName.trim()) 
+        ? request.fullName 
+        : (request.user?.fullName || 'Unknown User');
+      
+      return {
+        ...request,
+        fullName: finalFullName,
+      };
+    });
   }
 
   /**
    * Get verification request by ID (Admin)
    */
   async getRequestById(id: string): Promise<VerificationRequestEntity> {
-    const request = await this.verificationRepo.findOne({
-      where: { id },
-      relations: ['user', 'reviewer'],
-    });
+    const request = await this.verificationRepo
+      .createQueryBuilder('vr')
+      .leftJoinAndSelect('vr.user', 'user')
+      .leftJoinAndSelect('vr.reviewer', 'reviewer')
+      .select([
+        'vr',
+        'user.id',
+        'user.email',
+        'user.fullName',
+        'user.createdAt',
+        'reviewer.id',
+        'reviewer.email',
+        'reviewer.fullName',
+      ])
+      .where('vr.id = :id', { id })
+      .getOne();
 
     if (!request) {
       throw new NotFoundException('Verification request not found');
+    }
+
+    // Fallback: if verification request fullName is empty, use user's fullName
+    if (!request.fullName || !request.fullName.trim()) {
+      request.fullName = request.user?.fullName || 'Unknown User';
     }
 
     return request;
@@ -231,6 +299,26 @@ export class VerificationService {
       });
     } catch (error) {
       console.error('Failed to create database notification:', error);
+    }
+
+    // Send verification status email
+    const user = await this.userRepo.findOne({ where: { id: request.userId } });
+    if (user) {
+      try {
+        if (dto.status === VerificationStatus.APPROVED) {
+          await this.mailService.sendTeacherVerificationApproved(user.email, user.fullName);
+          console.log(`Verification approved email sent to: ${user.email}`);
+        } else if (dto.status === VerificationStatus.REJECTED) {
+          await this.mailService.sendTeacherVerificationRejected(
+            user.email, 
+            user.fullName, 
+            dto.rejectionReason || 'Your verification request was rejected. Please review your documents and try again.'
+          );
+          console.log(`Verification rejected email sent to: ${user.email}`);
+        }
+      } catch (error) {
+        console.error('Failed to send verification status email:', error);
+      }
     }
 
     return request;

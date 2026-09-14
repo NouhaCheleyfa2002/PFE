@@ -17,5 +17,5 @@ COPY . .
 # Expose port
 EXPOSE 3001
 
-# Start development server with webpack (not turbopack)
-CMD ["npm", "run", "dev"]
+# Start development server with webpack (not turbopack) on all interfaces
+CMD ["npm", "run", "dev", "--", "-H", "0.0.0.0", "-p", "3001"]

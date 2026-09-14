@@ -1,4 +1,55 @@
 services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: edushare-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override specific values for Docker environment
+      NODE_ENV: development
+      DATABASE_HOST: postgres
+      REDIS_HOST: redis
+      SEAWEEDFS_FILER_URL: http://seaweed-filer:8888
+      SEAWEED_MASTER_URL: http://seaweed-master:9333
+      SEAWEED_FILER_URL: http://seaweed-filer:8888
+      EMBEDDINGS_URL: http://embeddings:8000
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      embeddings:
+        condition: service_started
+      seaweed-filer:
+        condition: service_started
+
+    networks:
+      - edushare-network
+
+
+  frontend:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+    container_name: edushare-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+    depends_on:
+      - backend
+    networks:
+      - edushare-network
+
   embeddings:
     image: hwdsl2/embeddings-server
     container_name: embeddings

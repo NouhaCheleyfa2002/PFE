@@ -1,14 +1,19 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, Request, HttpCode, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ModerationService } from './moderation.service';
+import { ExamsService } from '../exams/exams.service';
 
 @Controller('moderation')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
 export class ModerationController {
-  constructor(private readonly moderationService: ModerationService) {}
+  constructor(
+    private readonly moderationService: ModerationService,
+    @Inject(forwardRef(() => ExamsService))
+    private readonly examsService: ExamsService,
+  ) {}
 
   /**
    * Get pending documents for moderation
@@ -36,7 +41,7 @@ export class ModerationController {
   }
 
   /**
-   * Approve document
+   * Approve document or exam
    */
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
@@ -45,6 +50,17 @@ export class ModerationController {
     @Request() req: any,
     @Body() body: { notes?: string },
   ) {
+    // Check if this is an exam (prefixed with 'exam-')
+    if (id.startsWith('exam-')) {
+      const examId = id.substring(5); // Remove 'exam-' prefix
+      await this.examsService.approveExam(examId, req.user.sub);
+      return {
+        success: true,
+        message: 'Exam approved successfully',
+      };
+    }
+    
+    // Otherwise treat as document
     await this.moderationService.approveDocument(id, req.user.sub, body.notes);
     return {
       success: true,
@@ -53,7 +69,7 @@ export class ModerationController {
   }
 
   /**
-   * Reject document
+   * Reject document or exam
    */
   @Post(':id/reject')
   @HttpCode(HttpStatus.OK)
@@ -62,6 +78,17 @@ export class ModerationController {
     @Request() req: any,
     @Body() body: { reason: string; notes?: string },
   ) {
+    // Check if this is an exam (prefixed with 'exam-')
+    if (id.startsWith('exam-')) {
+      const examId = id.substring(5); // Remove 'exam-' prefix
+      await this.examsService.rejectExam(examId, req.user.sub, body.reason);
+      return {
+        success: true,
+        message: 'Exam rejected successfully',
+      };
+    }
+    
+    // Otherwise treat as document
     await this.moderationService.rejectDocument(id, req.user.sub, body.reason, body.notes);
     return {
       success: true,

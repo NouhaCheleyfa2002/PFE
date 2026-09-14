@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   UseInterceptors,
   UploadedFiles,
   UseGuards,
@@ -311,6 +312,52 @@ export class DocumentsController {
     }
   }
 
+  /**
+   * Convert an uploaded exam document to the new exam system
+   * POST /documents/:id/convert-to-exam
+   */
+  @Post(':id/convert-to-exam')
+  @UseGuards(JwtAuthGuard)
+  async convertDocumentToExam(@Param('id') id: string, @Request() req: any) {
+    try {
+      const document = await this.documentsService.findById(id);
+      
+      if (!document) {
+        throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Check if user owns the document or is admin
+      const userId = req.user.sub;
+      const userRole = req.user.role;
+      if (document.userId !== userId && userRole !== 'admin') {
+        throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+      }
+
+      // Check if it's an exam
+      if (document.resourceType?.toLowerCase() !== 'exam') {
+        throw new HttpException('Document is not marked as an exam', HttpStatus.BAD_REQUEST);
+      }
+
+      // Check if already converted (exam exists)
+      // This would require injecting ExamsService - for now return instruction
+      
+      return {
+        success: true,
+        message: 'Document is ready to be converted to exam. Use the exam-builder to create from extracted questions.',
+        documentId: document.id,
+        title: document.title,
+        subject: document.subject,
+        classLevel: document.classLevel,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to convert document ${id} to exam:`, error);
+      throw new HttpException(
+        error.message || 'Failed to convert to exam',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
   @Get(':id/moderation-status')
   @UseGuards(JwtAuthGuard)
   async getModerationStatus(@Param('id') id: string, @Request() req: any) {
@@ -482,9 +529,9 @@ export class DocumentsController {
 
   @Get('teacher-analytics')
   @UseGuards(JwtAuthGuard)
-  async getTeacherAnalytics(@Request() req: any) {
+  async getTeacherAnalytics(@Request() req: any, @Query('dateRange') dateRange?: string) {
     const userId = req.user.sub;
-    const analytics = await this.documentsService.getTeacherAnalytics(userId);
+    const analytics = await this.documentsService.getTeacherAnalytics(userId, dateRange);
 
     return {
       success: true,
@@ -501,9 +548,24 @@ export class DocumentsController {
       throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
     }
 
-    // Check if user owns the document (or is admin)
-    if (document.userId !== req.user.sub && req.user.role !== 'admin') {
-      throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+    // Check if user owns the document, is admin, or has purchased it
+    const isOwner = document.userId === req.user.sub;
+    const isAdmin = req.user.role === 'admin';
+    
+    console.log(`[DocumentsController] Access check for document ${id}:`);
+    console.log(`  User ID: ${req.user.sub}`);
+    console.log(`  Document owner: ${document.userId}`);
+    console.log(`  Is owner: ${isOwner}`);
+    console.log(`  Is admin: ${isAdmin}`);
+    
+    if (!isOwner && !isAdmin) {
+      // Check if user has purchased this document
+      const hasPurchased = await this.documentsService.hasUserPurchased(req.user.sub, id);
+      console.log(`  Has purchased: ${hasPurchased}`);
+      
+      if (!hasPurchased) {
+        throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+      }
     }
 
     return document;

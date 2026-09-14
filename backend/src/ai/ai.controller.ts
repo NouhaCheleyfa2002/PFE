@@ -168,7 +168,7 @@ export class AiController {
   @Post('generate-variations')
   @HttpCode(HttpStatus.OK)
   async generateVariations(
-    @Body() dto: any, // Will use proper DTO
+    @Body() dto: any,
     @Request() req: any,
   ) {
     // Fetch original question
@@ -180,46 +180,118 @@ export class AiController {
       throw new NotFoundException('Question not found');
     }
 
-    const variationTypes = dto.variationType === 'all'
-      ? ['easier', 'harder', 'scenario_based', 'mcq', 'true_false', 'short_answer']
-      : [dto.variationType];
+    // Handle new format (variations array) or legacy format (variationType string)
+    let variationRequests: Array<{ transformation: string; questionType: string }> = [];
+    
+    if (dto.variations && Array.isArray(dto.variations)) {
+      // New format: array of {transformation, questionType}
+      variationRequests = dto.variations;
+    } else if (dto.variationType) {
+      // Legacy format: single variation type string
+      const vType = dto.variationType;
+      
+      if (vType === 'all') {
+        // Generate all common variations
+        variationRequests = [
+          { transformation: 'easier', questionType: 'short_answer' },
+          { transformation: 'same_concept', questionType: 'mcq' },
+          { transformation: 'same_concept', questionType: 'true_false' },
+          { transformation: 'harder', questionType: 'essay' },
+          { transformation: 'scenario_based', questionType: 'short_answer' },
+          { transformation: 'same_concept', questionType: 'fill_blank' },
+        ];
+      } else {
+        // Single legacy variation type
+        // Map old format to new format
+        const mapping: Record<string, { transformation: string; questionType: string }> = {
+          'easier': { transformation: 'easier', questionType: question.questionType || 'short_answer' },
+          'harder': { transformation: 'harder', questionType: question.questionType || 'short_answer' },
+          'scenario_based': { transformation: 'scenario_based', questionType: question.questionType || 'short_answer' },
+          'mcq': { transformation: 'same_concept', questionType: 'mcq' },
+          'true_false': { transformation: 'same_concept', questionType: 'true_false' },
+          'short_answer': { transformation: 'same_concept', questionType: 'short_answer' },
+          'essay': { transformation: 'same_concept', questionType: 'essay' },
+          'fill_blank': { transformation: 'same_concept', questionType: 'fill_blank' },
+        };
+        
+        variationRequests = [mapping[vType] || { transformation: 'same_concept', questionType: 'short_answer' }];
+      }
+    }
 
     const variations = await this.aiService.generateQuestionVariations(
       question,
-      variationTypes,
+      variationRequests,
       dto.customInstructions,
     );
 
-    // Optionally save variations to database
-    const savedVariations = await Promise.all(
-      variations.map(async (v: any) => {
-        const embeddingArray = await this.embeddingService.generateEmbedding(v.text);
-        const embeddingString = `[${embeddingArray.join(',')}]`;
-
-        const variationQuestion = this.examQuestionRepo.create({
-          questionText: v.text,
-          questionType: v.type,
-          options: v.options,
-          correctAnswer: v.correctAnswer,
-          difficulty: v.difficulty,
-          explanation: v.explanation,
-          topic: question.topic,
-          embedding: embeddingString,
-          documentId: question.documentId,
-        });
-
-        return this.examQuestionRepo.save(variationQuestion);
-      }),
-    );
-
+    // Return variations WITHOUT saving to database
+    // Let the frontend decide which ones to save
     return {
       success: true,
-      variations: savedVariations,
+      variations: variations, // Return the raw variations from AI
       originalQuestion: {
         id: question.id,
         text: question.questionText,
         type: question.questionType,
       },
+    };
+  }
+
+  @Post('save-variation')
+  async saveVariation(
+    @Body() dto: {
+      variation: any;
+      originalQuestionId: string;
+    },
+    @Request() req: any,
+  ) {
+    // Fetch original question for context
+    const originalQuestion = await this.examQuestionRepo.findOne({
+      where: { id: dto.originalQuestionId },
+    });
+
+    if (!originalQuestion) {
+      throw new NotFoundException('Original question not found');
+    }
+
+    // Generate embedding for the variation
+    const questionText = dto.variation.text || dto.variation.questionText;
+    
+    if (!questionText) {
+      throw new HttpException('Variation text is required', HttpStatus.BAD_REQUEST);
+    }
+
+    // Try to generate embedding, but don't fail if embedding service is down
+    let embeddingString: string | null = null;
+    try {
+      const embeddingArray = await this.embeddingService.generateEmbedding(
+        questionText,
+      );
+      embeddingString = `[${embeddingArray.join(',')}]`;
+    } catch (embeddingError) {
+      // Log but don't fail - embeddings are optional
+      console.warn('[AI Controller] Failed to generate embedding for variation, continuing without it:', embeddingError.message);
+    }
+
+    // Create and save the variation
+    const variationQuestion = this.examQuestionRepo.create({
+      questionText: questionText,
+      questionType: dto.variation.type || dto.variation.questionType,
+      options: dto.variation.options,
+      correctAnswer: dto.variation.correctAnswer,
+      difficulty: dto.variation.difficulty,
+      explanation: dto.variation.explanation,
+      topic: originalQuestion.topic,
+      embedding: embeddingString,
+      documentId: originalQuestion.documentId,
+      sourceType: 'ai_generated',
+    });
+
+    const saved = await this.examQuestionRepo.save(variationQuestion);
+
+    return {
+      success: true,
+      question: saved,
     };
   }
 

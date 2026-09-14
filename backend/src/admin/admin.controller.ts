@@ -105,5 +105,19 @@ export class AdminController {
   async getModerationStats() {
     return this.adminService.getModerationStats();
   }
-}
 
+  @Get('statistics')
+  async getStatistics() {
+    return this.adminService.getStatistics();
+  }
+
+  @Get('recent-activity')
+  async getRecentActivity() {
+    return this.adminService.getRecentActivity();
+  }
+
+  @Get('analytics')
+  async getAnalytics() {
+    return this.adminService.getAnalytics();
+  }
+}

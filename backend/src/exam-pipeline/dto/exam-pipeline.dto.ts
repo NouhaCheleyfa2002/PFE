@@ -75,6 +75,10 @@ export class PaginationDto {
   @IsOptional()
   @IsString()
   difficulty?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceType?: 'ai_extracted' | 'ai_generated' | 'ai_improved' | 'manual' | 'imported';
 }
 
 export class ReprocessDocumentDto {

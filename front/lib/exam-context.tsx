@@ -27,11 +27,18 @@ interface ExamState {
 
 export type PreviewMode = "edit" | "student";
 
+interface ActiveEditor {
+  userId: string;
+  userName: string;
+  color: string;
+}
+
 interface ExamContextType {
   exam: ExamState;
   savedAt: Date | null;
   isSaving: boolean;
   previewMode: PreviewMode;
+  activeEditors: Map<string, ActiveEditor>; // elementId -> editor info
   setPreviewMode: (mode: PreviewMode) => void;
   setExamId: (id: string | null) => void;
   setTitle: (title: string) => void;
@@ -53,6 +60,8 @@ interface ExamContextType {
   canAddQuestion: (points: number) => boolean;
   pointsRemaining: number;
   setWebSocket: (socket: Socket | null) => void;
+  startEditingElement: (elementId: string, elementType: string) => void;
+  stopEditingElement: (elementId: string) => void;
 }
 
 const ExamContext = createContext<ExamContextType | undefined>(undefined);
@@ -92,10 +101,22 @@ export function ExamProvider({ children }: { children: ReactNode }) {
   const [isSaving, setIsSaving] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("edit");
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [activeEditors, setActiveEditors] = useState<Map<string, ActiveEditor>>(new Map());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Track remote updates to avoid echo
   const isRemoteUpdate = useRef(false);
+
+  // Debug: Log active editors changes
+  useEffect(() => {
+    console.log('[ExamContext] Active editors updated:', {
+      count: activeEditors.size,
+      editors: Array.from(activeEditors.entries()).map(([elementId, editor]) => ({
+        elementId,
+        ...editor,
+      })),
+    });
+  }, [activeEditors]);
 
   // Load saved draft after mount (avoids SSR/client hydration mismatch)
   useEffect(() => {
@@ -174,11 +195,34 @@ export function ExamProvider({ children }: { children: ReactNode }) {
       setTimeout(() => { isRemoteUpdate.current = false; }, 100);
     };
 
+    const handleElementEditing = (data: any) => {
+      console.log('[ExamContext] Element editing:', data);
+      
+      if (data.action === 'start') {
+        setActiveEditors(prev => {
+          const next = new Map(prev);
+          next.set(data.elementId, {
+            userId: data.userId,
+            userName: data.userName,
+            color: data.color,
+          });
+          return next;
+        });
+      } else if (data.action === 'stop') {
+        setActiveEditors(prev => {
+          const next = new Map(prev);
+          next.delete(data.elementId);
+          return next;
+        });
+      }
+    };
+
     socket.on('exam:question_added', handleQuestionAdded);
     socket.on('exam:question_removed', handleQuestionRemoved);
     socket.on('question:updated', handleQuestionUpdated);
     socket.on('exam:questions_reordered', handleQuestionsReordered);
     socket.on('exam:metadata_updated', handleMetadataUpdated);
+    socket.on('exam:element_editing', handleElementEditing);
 
     console.log('[ExamContext] WebSocket listeners registered');
 
@@ -189,6 +233,7 @@ export function ExamProvider({ children }: { children: ReactNode }) {
       socket.off('question:updated', handleQuestionUpdated);
       socket.off('exam:questions_reordered', handleQuestionsReordered);
       socket.off('exam:metadata_updated', handleMetadataUpdated);
+      socket.off('exam:element_editing', handleElementEditing);
     };
   }, [socket, exam.id]);
 
@@ -405,6 +450,20 @@ export function ExamProvider({ children }: { children: ReactNode }) {
     [exam.maxPoints, totalPoints]
   );
 
+  const startEditingElement = useCallback((elementId: string, elementType: string) => {
+    if (socket && exam.id && !isRemoteUpdate.current) {
+      console.log('[ExamContext] Emitting start editing:', { examId: exam.id, elementId, elementType });
+      socket.emit('exam:start_editing_element', { examId: exam.id, elementId, elementType });
+    }
+  }, [socket, exam.id]);
+
+  const stopEditingElement = useCallback((elementId: string) => {
+    if (socket && exam.id && !isRemoteUpdate.current) {
+      console.log('[ExamContext] Emitting stop editing:', { examId: exam.id, elementId });
+      socket.emit('exam:stop_editing_element', { examId: exam.id, elementId });
+    }
+  }, [socket, exam.id]);
+
   return (
     <ExamContext.Provider
       value={{
@@ -412,6 +471,7 @@ export function ExamProvider({ children }: { children: ReactNode }) {
         savedAt,
         isSaving,
         previewMode,
+        activeEditors,
         setPreviewMode,
         setExamId,
         setTitle,
@@ -433,6 +493,8 @@ export function ExamProvider({ children }: { children: ReactNode }) {
         canAddQuestion,
         pointsRemaining,
         setWebSocket: setSocket,
+        startEditingElement,
+        stopEditingElement,
       }}
     >
       {children}

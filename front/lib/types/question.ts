@@ -25,6 +25,8 @@ export interface Question {
   difficulty: number;
   points: number;
   level?: string;
+  topic?: string; // Topic/concept covered
+  explanation?: string; // Explanation for the correct answer
   options?: McqOption[];
   correctAnswer?: string;
   blanks?: string[];

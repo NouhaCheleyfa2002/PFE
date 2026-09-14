@@ -18,8 +18,16 @@ import {
   ThumbsUp,
   ThumbsDown,
   MessageSquare,
+  Zap,
+  AlertTriangle,
+  Ban,
+  Shield,
+  Brain,
+  Users,
+  TrendingUp,
 } from "lucide-react";
 import { authService } from "@/lib/auth";
+import toast from "react-hot-toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -38,6 +46,35 @@ interface VerificationRequest {
   reviewedAt: string | null;
   reviewNotes: string | null;
   rejectionReason: string | null;
+  // AI Verification Fields
+  aiExtractedData?: {
+    fullName?: string;
+    professionalId?: string;
+    institution?: string;
+    role?: string;
+    teachingLevel?: string;
+    subjects?: string[];
+    idNumber?: string;
+    confidence: number;
+  } | null;
+  aiVerificationScore?: number | null;
+  aiStatus?: string;
+  aiRiskLevel?: string;
+  aiFlags?: string[];
+  duplicateCheckResult?: {
+    isDuplicate: boolean;
+    matchedAccounts: Array<{
+      userId: string;
+      fullName: string;
+      professionalId: string;
+      institution: string;
+      matchScore: number;
+      matchReasons: string[];
+    }>;
+    riskLevel: string;
+  } | null;
+  professionalId?: string | null;
+  aiProcessedAt?: string | null;
   user?: {
     email: string;
     createdAt: string;
@@ -74,6 +111,51 @@ function TeachingLevelBadge({ level }: { level: string }) {
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
       <GraduationCap className="w-3 h-3" />
       {labels[level] || level}
+    </span>
+  );
+}
+
+function AIStatusBadge({ status }: { status?: string }) {
+  if (!status || status === 'pending') return null;
+  
+  const configs: Record<string, { bg: string; text: string; icon: any; label: string }> = {
+    processing: { bg: "bg-blue-100", text: "text-blue-700", icon: RefreshCw, label: "AI Processing" },
+    verified_match: { bg: "bg-green-100", text: "text-green-700", icon: CheckCircle, label: "AI Verified" },
+    possible_duplicate: { bg: "bg-orange-100", text: "text-orange-700", icon: Users, label: "Possible Duplicate" },
+    suspicious_document: { bg: "bg-red-100", text: "text-red-700", icon: AlertTriangle, label: "Suspicious" },
+    needs_review: { bg: "bg-yellow-100", text: "text-yellow-700", icon: AlertCircle, label: "AI Needs Review" },
+    processed: { bg: "bg-gray-100", text: "text-gray-700", icon: Brain, label: "AI Processed" },
+    error: { bg: "bg-red-100", text: "text-red-700", icon: XCircle, label: "AI Error" },
+  };
+  
+  const config = configs[status] || configs.processed;
+  const Icon = config.icon;
+  
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.text}`}>
+      <Icon className="w-3 h-3" />
+      {config.label}
+    </span>
+  );
+}
+
+function RiskLevelBadge({ level }: { level?: string }) {
+  if (!level || level === 'unknown') return null;
+  
+  const configs: Record<string, { bg: string; text: string; icon: any; label: string }> = {
+    low: { bg: "bg-emerald-100", text: "text-emerald-700", icon: Shield, label: "Low Risk" },
+    medium: { bg: "bg-yellow-100", text: "text-yellow-700", icon: AlertCircle, label: "Medium Risk" },
+    high: { bg: "bg-orange-100", text: "text-orange-700", icon: AlertTriangle, label: "High Risk" },
+    critical: { bg: "bg-red-100", text: "text-red-700", icon: Ban, label: "Critical Risk" },
+  };
+  
+  const config = configs[level] || configs.medium;
+  const Icon = config.icon;
+  
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.text}`}>
+      <Icon className="w-3 h-3" />
+      {config.label}
     </span>
   );
 }
@@ -186,7 +268,11 @@ export default function AdminVerificationPage() {
       });
 
       if (response.ok) {
-        alert("Review submitted successfully!");
+        const action = reviewDecision === "approve" ? "approved" : "rejected";
+        toast.success(`📧 Verification ${action}! Email sent to teacher`, {
+          duration: 5000,
+          icon: reviewDecision === "approve" ? "✅" : "⚠️",
+        });
         setShowReviewModal(false);
         setSelectedRequest(null);
         fetchRequests();
@@ -290,7 +376,10 @@ export default function AdminVerificationPage() {
           </div>
         ) : (
           filteredRequests.map((request) => {
-            const initials = request.fullName ? request.fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : "??";
+            const fullName = request.fullName || request.user?.fullName || "Unknown User";
+            const initials = fullName 
+              ? fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() 
+              : "??";
             
             return (
             <div key={request.id} className="bg-white rounded-xl border border-[#edf0f7] p-6 hover:shadow-md transition-shadow">
@@ -300,11 +389,13 @@ export default function AdminVerificationPage() {
                     {initials}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-[#0d1b3e] mb-1">{request.fullName}</h3>
+                    <h3 className="text-lg font-bold text-[#0d1b3e] mb-1">{fullName}</h3>
                     <p className="text-sm text-[#8899bb] mb-2">{request.user?.email || "No email"}</p>
                     <div className="flex items-center gap-2 flex-wrap">
                       <StatusBadge status={request.status} />
                       <TeachingLevelBadge level={request.teachingLevel} />
+                      <AIStatusBadge status={request.aiStatus} />
+                      <RiskLevelBadge level={request.aiRiskLevel} />
                     </div>
                   </div>
                 </div>
@@ -351,6 +442,33 @@ export default function AdminVerificationPage() {
                   <p className="text-sm text-red-700">{request.rejectionReason}</p>
                 </div>
               )}
+
+              {/* AI Quick Summary for High Risk */}
+              {request.aiProcessedAt && (request.aiRiskLevel === 'high' || request.aiRiskLevel === 'critical' || request.duplicateCheckResult?.isDuplicate) && (
+                <div className="mt-4 p-3 rounded-lg bg-orange-50 border-2 border-orange-300">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-orange-600 mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-orange-900 mb-1">AI Alert - Requires Attention</p>
+                      {request.duplicateCheckResult?.isDuplicate && (
+                        <p className="text-sm text-orange-700 mb-1">
+                          • Possible duplicate: {request.duplicateCheckResult.matchedAccounts.length} similar account(s) found
+                        </p>
+                      )}
+                      {request.aiFlags && request.aiFlags.length > 0 && (
+                        <p className="text-sm text-orange-700">
+                          • {request.aiFlags.length} issue(s) detected by AI
+                        </p>
+                      )}
+                      {request.aiVerificationScore !== null && request.aiVerificationScore !== undefined && Number(request.aiVerificationScore) < 60 && (
+                        <p className="text-sm text-orange-700">
+                          • Low confidence score: {Number(request.aiVerificationScore).toFixed(0)}%
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             );
           })
@@ -379,7 +497,7 @@ export default function AdminVerificationPage() {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-[#8899bb]">Name:</p>
-                  <p className="font-medium text-[#0d1b3e]">{selectedRequest.fullName || "Name not provided"}</p>
+                  <p className="font-medium text-[#0d1b3e]">{selectedRequest.fullName || selectedRequest.user?.fullName || "Name not provided"}</p>
                 </div>
                 <div>
                   <p className="text-[#8899bb]">Email:</p>
@@ -399,6 +517,158 @@ export default function AdminVerificationPage() {
                 </div>
               </div>
             </div>
+
+            {/* AI Verification Results */}
+            {selectedRequest.aiProcessedAt && (
+              <div className="mb-6 p-5 rounded-xl bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-purple-900 flex items-center gap-2">
+                    <Brain className="w-5 h-5" />
+                    AI Verification Analysis
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <AIStatusBadge status={selectedRequest.aiStatus} />
+                    <RiskLevelBadge level={selectedRequest.aiRiskLevel} />
+                  </div>
+                </div>
+
+                {/* AI Score */}
+                {selectedRequest.aiVerificationScore !== null && selectedRequest.aiVerificationScore !== undefined && (
+                  <div className="mb-4 p-3 rounded-lg bg-white border border-purple-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-purple-900">AI Confidence Score</span>
+                      <div className="flex items-center gap-2">
+                        <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all ${
+                              Number(selectedRequest.aiVerificationScore) >= 80 ? 'bg-green-500' : 
+                              Number(selectedRequest.aiVerificationScore) >= 60 ? 'bg-yellow-500' : 
+                              'bg-red-500'
+                            }`}
+                            style={{ width: `${Number(selectedRequest.aiVerificationScore)}%` }}
+                          />
+                        </div>
+                        <span className="text-lg font-bold text-purple-900">
+                          {Number(selectedRequest.aiVerificationScore).toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Extracted Data */}
+                {selectedRequest.aiExtractedData && (
+                  <div className="mb-4 p-4 rounded-lg bg-white border border-purple-200">
+                    <h4 className="font-semibold text-purple-900 mb-3 text-sm flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      AI Extracted Information from Documents
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      {selectedRequest.aiExtractedData.fullName && (
+                        <div>
+                          <p className="text-purple-700 font-medium">Name:</p>
+                          <p className="text-gray-700">{selectedRequest.aiExtractedData.fullName}</p>
+                        </div>
+                      )}
+                      {selectedRequest.aiExtractedData.professionalId && (
+                        <div>
+                          <p className="text-purple-700 font-medium">Professional ID:</p>
+                          <p className="text-gray-700 font-mono text-xs">{selectedRequest.aiExtractedData.professionalId}</p>
+                        </div>
+                      )}
+                      {selectedRequest.aiExtractedData.institution && (
+                        <div>
+                          <p className="text-purple-700 font-medium">Institution:</p>
+                          <p className="text-gray-700">{selectedRequest.aiExtractedData.institution}</p>
+                        </div>
+                      )}
+                      {selectedRequest.aiExtractedData.role && (
+                        <div>
+                          <p className="text-purple-700 font-medium">Role:</p>
+                          <p className="text-gray-700">{selectedRequest.aiExtractedData.role}</p>
+                        </div>
+                      )}
+                      {selectedRequest.aiExtractedData.idNumber && (
+                        <div>
+                          <p className="text-purple-700 font-medium">ID Number:</p>
+                          <p className="text-gray-700 font-mono text-xs">{selectedRequest.aiExtractedData.idNumber}</p>
+                        </div>
+                      )}
+                      {selectedRequest.aiExtractedData.confidence !== undefined && (
+                        <div>
+                          <p className="text-purple-700 font-medium">OCR Confidence:</p>
+                          <p className="text-gray-700">{selectedRequest.aiExtractedData.confidence}%</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Duplicate Check Results */}
+                {selectedRequest.duplicateCheckResult && selectedRequest.duplicateCheckResult.isDuplicate && (
+                  <div className="mb-4 p-4 rounded-lg bg-orange-50 border-2 border-orange-300">
+                    <h4 className="font-semibold text-orange-900 mb-3 text-sm flex items-center gap-2">
+                      <Users className="w-4 h-4" />
+                      ⚠️ Possible Duplicate Accounts Detected
+                    </h4>
+                    <div className="space-y-3">
+                      {selectedRequest.duplicateCheckResult.matchedAccounts.map((match, index) => (
+                        <div key={index} className="p-3 rounded-lg bg-white border border-orange-200">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <p className="font-semibold text-orange-900">{match.fullName}</p>
+                              <p className="text-xs text-orange-700">{match.institution}</p>
+                            </div>
+                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                              match.matchScore === 100 ? 'bg-red-100 text-red-700' :
+                              match.matchScore >= 90 ? 'bg-orange-100 text-orange-700' :
+                              'bg-yellow-100 text-yellow-700'
+                            }`}>
+                              {match.matchScore}% Match
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {match.matchReasons.map((reason, idx) => (
+                              <span key={idx} className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-xs">
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+                          {match.professionalId && (
+                            <p className="text-xs text-orange-700">
+                              Professional ID: <span className="font-mono">{match.professionalId}</span>
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Flags/Warnings */}
+                {selectedRequest.aiFlags && selectedRequest.aiFlags.length > 0 && (
+                  <div className="p-4 rounded-lg bg-yellow-50 border border-yellow-300">
+                    <h4 className="font-semibold text-yellow-900 mb-2 text-sm flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
+                      AI Detected Issues
+                    </h4>
+                    <ul className="space-y-1">
+                      {selectedRequest.aiFlags.map((flag, index) => (
+                        <li key={index} className="text-sm text-yellow-800 flex items-start gap-2">
+                          <span className="text-yellow-600 mt-1">•</span>
+                          <span>{flag}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <p className="text-xs text-purple-600 mt-3 flex items-center gap-1">
+                  <Zap className="w-3 h-3" />
+                  AI analysis is advisory only. Final decision requires human review.
+                </p>
+              </div>
+            )}
 
             {/* Documents */}
             <div className="mb-6">

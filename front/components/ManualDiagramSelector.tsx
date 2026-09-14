@@ -1,9 +1,132 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Check, ZoomIn, ZoomOut, RotateCw, Download, Scissors } from 'lucide-react';
+import { X, Check, ZoomIn, ZoomOut, RotateCw, Download, Scissors, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+
+// Success Modal Component
+interface SuccessModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  message: string;
+}
+
+function SuccessModal({ isOpen, onClose, title, message }: SuccessModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+        {/* Header with gradient */}
+        <div className="bg-gradient-to-r from-green-500 to-green-600 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center">
+              <CheckCircle2 className="w-6 h-6 text-green-600" />
+            </div>
+            <h3 className="text-xl font-bold text-white">{title}</h3>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          <p className="text-gray-700 leading-relaxed mb-6">{message}</p>
+
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all transform hover:scale-105 active:scale-95"
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Error Modal Component
+interface ErrorModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  message: string;
+}
+
+function ErrorModal({ isOpen, onClose, title, message }: ErrorModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+        {/* Header with gradient */}
+        <div className="bg-gradient-to-r from-red-500 to-red-600 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
+              <XCircle className="w-6 h-6 text-red-600" />
+            </div>
+            <h3 className="text-xl font-bold text-white">{title}</h3>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          <p className="text-gray-700 leading-relaxed mb-6">{message}</p>
+
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all transform hover:scale-105 active:scale-95"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Warning Modal Component
+interface WarningModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  message: string;
+}
+
+function WarningModal({ isOpen, onClose, title, message }: WarningModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+        {/* Header with gradient */}
+        <div className="bg-gradient-to-r from-yellow-500 to-orange-500 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-yellow-100 flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-yellow-600" />
+            </div>
+            <h3 className="text-xl font-bold text-white">{title}</h3>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          <p className="text-gray-700 leading-relaxed mb-6">{message}</p>
+
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-semibold shadow-lg hover:shadow-xl transition-all transform hover:scale-105 active:scale-95"
+          >
+            Understood
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface ManualDiagramSelectorProps {
   questionId: string;
@@ -31,17 +154,53 @@ export default function ManualDiagramSelector({
   const [cropEnd, setCropEnd] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [zoom, setZoom] = useState(1.0);
+  const [currentPage, setCurrentPage] = useState(pageNumber); // Track current page
+  const [totalPages, setTotalPages] = useState(0); // Track total pages in PDF
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const pdfDocRef = useRef<any>(null); // Store PDF document reference
+  
+  // Modal states
+  const [successModal, setSuccessModal] = useState({ isOpen: false, title: '', message: '' });
+  const [errorModal, setErrorModal] = useState({ isOpen: false, title: '', message: '' });
+  const [warningModal, setWarningModal] = useState({ isOpen: false, title: '', message: '' });
 
   // Load PDF page
   useEffect(() => {
     loadPDFPage();
-  }, [documentUrl, pageNumber]);
+  }, [documentUrl, currentPage]); // Re-load when page changes
+
+  // Keyboard shortcuts for page navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (loading || uploading) return;
+      
+      // Arrow keys for page navigation
+      if (e.key === 'ArrowLeft' && currentPage > 1) {
+        e.preventDefault();
+        setCurrentPage(prev => prev - 1);
+      } else if (e.key === 'ArrowRight' && currentPage < totalPages) {
+        e.preventDefault();
+        setCurrentPage(prev => prev + 1);
+      }
+      // Escape to close
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentPage, totalPages, loading, uploading, onClose]);
 
   const loadPDFPage = async () => {
     try {
       setLoading(true);
+      // Reset crop selection when changing pages
+      setCropStart(null);
+      setCropEnd(null);
+      
       const pdfjsLib = (window as any).pdfjsLib;
       
       if (!pdfjsLib) {
@@ -65,16 +224,23 @@ export default function ManualDiagramSelector({
       }
 
       console.log('[PDF] Loading document:', documentUrl);
-      const loadingTask = pdfjsLib.getDocument({
-        url: documentUrl,
-        withCredentials: false,
-        isEvalSupported: false,
-      });
-      const pdf = await loadingTask.promise;
-      console.log('[PDF] Document loaded, total pages:', pdf.numPages);
       
-      const page = await pdf.getPage(pageNumber);
-      console.log('[PDF] Page', pageNumber, 'loaded');
+      // Reuse PDF document if already loaded
+      let pdf = pdfDocRef.current;
+      if (!pdf) {
+        const loadingTask = pdfjsLib.getDocument({
+          url: documentUrl,
+          withCredentials: false,
+          isEvalSupported: false,
+        });
+        pdf = await loadingTask.promise;
+        pdfDocRef.current = pdf;
+        setTotalPages(pdf.numPages);
+        console.log('[PDF] Document loaded, total pages:', pdf.numPages);
+      }
+      
+      const page = await pdf.getPage(currentPage);
+      console.log('[PDF] Page', currentPage, 'loaded');
 
       const scale = 2.0; // High resolution
       const viewport = page.getViewport({ scale });
@@ -267,7 +433,11 @@ export default function ManualDiagramSelector({
         console.log('[Upload] Image size:', imageSizeKB, 'KB');
 
         if (imageSizeKB > 40000) {
-          alert(`Image is too large (${imageSizeKB}KB). Please select a smaller area or reduce zoom.`);
+          setWarningModal({
+            isOpen: true,
+            title: 'Image Too Large',
+            message: `The selected area is too large (${imageSizeKB}KB). Please select a smaller area or reduce the zoom level to continue.`
+          });
           setUploading(false);
           return;
         }
@@ -277,7 +447,7 @@ export default function ManualDiagramSelector({
           mimeType: 'image/jpeg',
           width: Math.round(width),
           height: Math.round(height),
-          pageNumber,
+          pageNumber: currentPage, // Use current page instead of prop
           cropRegion: { 
             x: Math.round(x), 
             y: Math.round(y), 
@@ -304,9 +474,16 @@ export default function ManualDiagramSelector({
         if (response.ok) {
           const result = await response.json();
           console.log('[Upload] Success:', result);
-          alert('✅ Diagram uploaded successfully!');
-          onSuccess();
-          onClose();
+          setSuccessModal({
+            isOpen: true,
+            title: 'Diagram Uploaded!',
+            message: 'The diagram has been successfully uploaded and linked to your question. The page will refresh to show the updated question.'
+          });
+          // Wait a moment for user to see the success message, then call callbacks
+          setTimeout(() => {
+            onSuccess();
+            onClose();
+          }, 2000);
         } else {
           const errorText = await response.text();
           console.error('[Upload] Error response:', errorText);
@@ -317,7 +494,11 @@ export default function ManualDiagramSelector({
           } catch {
             errorMessage = errorText;
           }
-          alert(`❌ Failed to upload diagram: ${errorMessage}`);
+          setErrorModal({
+            isOpen: true,
+            title: 'Upload Failed',
+            message: `Failed to upload the diagram: ${errorMessage}. Please try again or contact support if the issue persists.`
+          });
           setUploading(false);
         }
       } else {
@@ -325,7 +506,11 @@ export default function ManualDiagramSelector({
       }
     } catch (error) {
       console.error('[Upload] Exception:', error);
-      alert(`❌ Failed to upload diagram: ${(error as any).message}`);
+      setErrorModal({
+        isOpen: true,
+        title: 'Upload Error',
+        message: `An error occurred while uploading the diagram: ${(error as any).message}. Please try again.`
+      });
       setUploading(false);
     }
   };
@@ -356,10 +541,48 @@ export default function ManualDiagramSelector({
             <strong>Question:</strong> {questionText.substring(0, 100)}...
           </p>
           <p className="text-xs text-blue-600 bg-blue-50 p-3 rounded border border-blue-200">
-            <strong>📋 Instructions:</strong> Use zoom controls for large diagrams. Click and drag to select the diagram area. 
-            Include the complete container with title, diagrams, labels, and caption.
+            <strong>📋 Instructions:</strong> Use page navigation to find your diagram. Use zoom controls for large diagrams. 
+            Click and drag to select the diagram area. Include the complete container with title, diagrams, labels, and caption.
           </p>
         </div>
+
+        {/* Page Navigation - NEW */}
+        {totalPages > 1 && (
+          <div className="px-6 py-3 bg-gray-100 border-b border-gray-300 flex items-center justify-center gap-4">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage <= 1 || loading}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              ← Previous
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Page</span>
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                value={currentPage}
+                onChange={(e) => {
+                  const page = parseInt(e.target.value);
+                  if (page >= 1 && page <= totalPages) {
+                    setCurrentPage(page);
+                  }
+                }}
+                disabled={loading}
+                className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-600">of {totalPages}</span>
+            </div>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage >= totalPages || loading}
+              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              Next →
+            </button>
+          </div>
+        )}
 
         {/* Canvas Area */}
         <div className="flex-1 overflow-auto p-6 bg-gray-50" ref={containerRef}>
@@ -367,7 +590,7 @@ export default function ManualDiagramSelector({
             <div className="flex items-center justify-center h-96">
               <div className="text-center">
                 <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-                <p className="text-gray-600">Loading PDF page {pageNumber}...</p>
+                <p className="text-gray-600">Loading page {currentPage}{totalPages > 0 && ` of ${totalPages}`}...</p>
               </div>
             </div>
           ) : pdfPage ? (
@@ -458,6 +681,28 @@ export default function ManualDiagramSelector({
           </div>
         </div>
       </div>
+      
+      {/* Custom Modals */}
+      <SuccessModal
+        isOpen={successModal.isOpen}
+        onClose={() => setSuccessModal({ isOpen: false, title: '', message: '' })}
+        title={successModal.title}
+        message={successModal.message}
+      />
+      
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        onClose={() => setErrorModal({ isOpen: false, title: '', message: '' })}
+        title={errorModal.title}
+        message={errorModal.message}
+      />
+      
+      <WarningModal
+        isOpen={warningModal.isOpen}
+        onClose={() => setWarningModal({ isOpen: false, title: '', message: '' })}
+        title={warningModal.title}
+        message={warningModal.message}
+      />
     </div>
   );
 }

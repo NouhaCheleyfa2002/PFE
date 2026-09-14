@@ -6,9 +6,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
 import { UserEntity } from './entities/user.entity';
 import { PremiumGuard } from './guards/premium.guard';
 import { UserNotificationsModule } from '../user-notifications/user-notifications.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -24,9 +26,10 @@ import { UserNotificationsModule } from '../user-notifications/user-notification
       }),
     }),
     UserNotificationsModule,
+    MailModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, PremiumGuard],
+  providers: [AuthService, JwtStrategy, GoogleStrategy, PremiumGuard],
   exports: [AuthService, JwtModule, PremiumGuard],
 })
 export class AuthModule {}

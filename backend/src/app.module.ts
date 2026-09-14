@@ -25,6 +25,9 @@ import { TemplatesModule } from './templates/templates.module';
 import { getTypeOrmConfig } from './config/typeorm.config';
 import { CollaborationModule } from './collaboration/collaboration.module';
 import { ExamsModule } from './exams/exams.module';
+import { MailModule } from './mail/mail.module';
+import { PaymentModule } from './payment/payment.module';
+import { StudentModule } from './student/student.module';
 
 @Module({
   imports: [
@@ -46,6 +49,7 @@ import { ExamsModule } from './exams/exams.module';
     }),
     UploadModule,
     AuthModule,
+    MailModule,
     NotificationModule,
     AdminModule,
     QuestionsModule,
@@ -64,6 +68,8 @@ import { ExamsModule } from './exams/exams.module';
     TemplatesModule,
     CollaborationModule,
     ExamsModule,
+    PaymentModule,
+    StudentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

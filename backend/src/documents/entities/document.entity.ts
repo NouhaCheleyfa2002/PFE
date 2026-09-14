@@ -2,6 +2,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateCol
 import { DocumentStatus } from '../document.interface';
 import { ExamQuestionEntity } from '../../exam-pipeline/entities/exam-question.entity';
 import { UserEntity } from '../../auth/entities/user.entity';
+import { PurchaseEntity } from '../../purchases/entities/purchase.entity';
 
 @Entity('documents')
 @Index(['userId', 'status'])
@@ -131,4 +132,8 @@ export class DocumentEntity {
   // Reverse relation to questions
   @OneToMany(() => ExamQuestionEntity, question => question.document)
   questions: ExamQuestionEntity[];
+
+  // Reverse relation to purchases
+  @OneToMany(() => PurchaseEntity, purchase => purchase.document)
+  purchases: PurchaseEntity[];
 }

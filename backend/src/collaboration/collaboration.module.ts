@@ -15,6 +15,7 @@ import { UserEntity } from '../auth/entities/user.entity';
 import { DocumentEntity } from '../documents/entities/document.entity';
 import { ExamEntity } from '../exams/entities/exam.entity';
 import { UserNotificationsModule } from '../user-notifications/user-notifications.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { UserNotificationsModule } from '../user-notifications/user-notification
       ExamEntity,
     ]),
     forwardRef(() => UserNotificationsModule),
+    MailModule,
   ],
   providers: [CollaborationService],
   controllers: [CollaborationController],

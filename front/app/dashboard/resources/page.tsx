@@ -1,18 +1,20 @@
 "use client";
 
 import React, { useState, useEffect, Suspense } from "react";
-import { FileText, Eye, Trash2, Star, Upload, Download, Search, Filter, X, ChevronDown, BookOpen, FileCheck, BadgeCheck, Bookmark, DollarSign, Clock, Zap, Edit, Users } from "lucide-react";
+import { FileText, Eye, Trash2, Star, Upload, Download, Search, Filter, X, ChevronDown, BookOpen, FileCheck, BadgeCheck, Bookmark, DollarSign, Clock, Zap, Edit, Users, ShoppingBag, Library } from "lucide-react";
 import { UniversalDocumentPreview } from "@/components/preview/UniversalDocumentPreview";
+import { ExamViewerModal } from "@/components/exam/ExamViewerModal";
 import { EDUCATION_LEVELS } from "@/lib/education-config";
 import { authService } from "@/lib/auth";
 import { useBookmarks } from "@/lib/use-bookmarks";
 import { CollaboratorManager, ActivityFeed } from "@/components/collaboration";
 import { useSearchParams } from "next/navigation";
 import DocumentChatPanel from "@/components/ai/DocumentChatPanel";
+import toast from "react-hot-toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
-type MainTab = "uploads" | "bookmarks";
+type MainTab = "uploads" | "library" | "bookmarks";
 type ResourceTab = "courses" | "exams";
 
 interface DatabaseResource {
@@ -172,8 +174,10 @@ function ResourcesPageContent() {
   const { fetchBookmarks, toggleBookmark } = useBookmarks();
   const searchParams = useSearchParams();
   const [resources, setResources] = useState<DatabaseResource[]>([]);
+  const [purchasedResources, setPurchasedResources] = useState<DatabaseResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [previewDoc, setPreviewDoc] = useState<DatabaseResource | null>(null);
+  const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<MainTab>("uploads");
   const [bookmarkedResources, setBookmarkedResources] = useState<any[]>([]);
@@ -185,6 +189,10 @@ function ResourcesPageContent() {
   const [collaboratorsMap, setCollaboratorsMap] = useState<Record<string, any[]>>({});
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   
+  // Bulk delete state
+  const [selectedResources, setSelectedResources] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  
   // Filtering states
   const [activeTab, setActiveTab] = useState<ResourceTab>("courses");
   const [search, setSearch] = useState("");
@@ -195,12 +203,40 @@ function ResourcesPageContent() {
   const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
-    if (mainTab === "uploads") {
-      fetchMyResources();
+    const user = authService.getUser();
+    const isStudent = user?.role === 'student';
+    
+    // Students always start on library tab
+    if (isStudent) {
+      setMainTab('library');
+      fetchPurchasedResources();
     } else {
-      loadBookmarks();
+      // Teachers/admins follow the tab param or default to uploads
+      if (mainTab === "uploads") {
+        fetchMyResources();
+      } else if (mainTab === "library") {
+        fetchPurchasedResources();
+      } else {
+        loadBookmarks();
+      }
     }
   }, [mainTab]);
+
+  // Load counts on mount for badge display
+  useEffect(() => {
+    // Load purchased resources count
+    fetchPurchasedResources();
+    // Load bookmarks count
+    loadBookmarks();
+  }, []);
+
+  // Check for tab param on mount
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'library') {
+      setMainTab('library');
+    }
+  }, [searchParams]);
 
   // Check for highlight param on mount
   useEffect(() => {
@@ -221,27 +257,131 @@ function ResourcesPageContent() {
 
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/documents`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      
+      // Fetch both documents and AI-generated exams
+      const [docsResponse, examsResponse] = await Promise.all([
+        fetch(`${API_URL}/documents`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_URL}/exams/ai-generated/list`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
 
-      if (response.ok) {
-        const data = await response.json();
+      const combinedResources: DatabaseResource[] = [];
+
+      // Add documents
+      if (docsResponse.ok) {
+        const data = await docsResponse.json();
         console.log('=== RESOURCES PAGE DEBUG ===');
         console.log('API Response:', data);
         console.log('Documents:', data.documents);
         if (data.documents && data.documents.length > 0) {
           console.log('First document:', data.documents[0]);
         }
-        setResources(data.documents || []);
-        
-        // Fetch collaborators for each resource
-        if (data.documents && data.documents.length > 0) {
-          fetchAllCollaborators(data.documents.map((d: DatabaseResource) => d.id));
+        combinedResources.push(...(data.documents || []));
+      }
+
+      // Add AI-generated exams
+      if (examsResponse.ok) {
+        const examsData = await examsResponse.json();
+        console.log('AI Exams Response:', examsData);
+        if (examsData.exams) {
+          // Map exams to DatabaseResource format
+          const mappedExams: DatabaseResource[] = examsData.exams.map((exam: any) => ({
+            id: exam.id,
+            title: exam.title,
+            originalName: exam.title,
+            subject: exam.subject || 'Not specified',
+            classLevel: exam.classLevel || 'Not specified',
+            resourceType: 'Exam',
+            storageUrl: '', // Exams don't have file storage
+            fileSize: 0,
+            views: exam.views || 0,
+            downloads: exam.downloads || 0,
+            averageRating: exam.averageRating || 0,
+            totalRatings: exam.totalRatings || 0,
+            license: exam.license || 'free',
+            price: exam.price || null,
+            createdAt: exam.createdAt,
+            status: exam.isPublished ? 'published' : 'draft',
+            verificationStatus: exam.verificationStatus || 'pending',
+            rejectionReason: exam.rejectionReason || null,
+            processedAt: exam.publishedAt || null,
+            keywords: exam.keywords || [],
+            description: exam.description || null,
+          }));
+          combinedResources.push(...mappedExams);
+          console.log('Mapped exams:', mappedExams);
+        }
+      }
+
+      setResources(combinedResources);
+      
+      // Fetch collaborators for each resource
+      if (combinedResources.length > 0) {
+        const docIds = combinedResources.filter(r => r.storageUrl).map((d: DatabaseResource) => d.id);
+        if (docIds.length > 0) {
+          fetchAllCollaborators(docIds);
         }
       }
     } catch (error) {
       console.error("Failed to fetch resources:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchPurchasedResources = async () => {
+    const token = authService.getToken();
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/purchases/my-purchases`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Purchased resources:', data.purchases);
+        
+        // Map purchases to resource format and deduplicate by document ID
+        const purchasedDocsMap = new Map();
+        data.purchases.forEach((purchase: any) => {
+          const docId = purchase.document.id;
+          // Only add if not already in map (keeps first occurrence)
+          if (!purchasedDocsMap.has(docId)) {
+            purchasedDocsMap.set(docId, {
+              id: purchase.document.id,
+              title: purchase.document.title,
+              originalName: purchase.document.originalName,
+              subject: purchase.document.subject,
+              classLevel: purchase.document.classLevel,
+              resourceType: purchase.document.resourceType,
+              storageUrl: purchase.document.storageUrl,
+              fileSize: purchase.document.fileSize,
+              views: purchase.document.views,
+              downloads: purchase.document.downloads,
+              averageRating: purchase.document.averageRating,
+              totalRatings: purchase.document.totalRatings,
+              license: purchase.document.license,
+              price: purchase.document.price,
+              createdAt: purchase.purchasedAt,
+              status: 'completed',
+              verificationStatus: 'approved',
+            });
+          }
+        });
+        
+        const purchasedDocs = Array.from(purchasedDocsMap.values());
+        setPurchasedResources(purchasedDocs);
+      }
+    } catch (error) {
+      console.error("Failed to fetch purchased resources:", error);
     } finally {
       setLoading(false);
     }
@@ -276,7 +416,13 @@ function ResourcesPageContent() {
 
   const loadBookmarks = async () => {
     const bookmarks = await fetchBookmarks();
-    setBookmarkedResources(bookmarks);
+    
+    // Deduplicate bookmarks by ID
+    const uniqueBookmarks = Array.from(
+      new Map(bookmarks.map((b: any) => [b.id, b])).values()
+    );
+    
+    setBookmarkedResources(uniqueBookmarks);
   };
 
   // Get unique values from resources
@@ -367,6 +513,12 @@ function ResourcesPageContent() {
   };
 
   const handleDownload = async (resource: DatabaseResource) => {
+    // Exams should be opened in viewer, not downloaded
+    if (resource.resourceType?.toLowerCase() === 'exam') {
+      handlePreview(resource); // Reuse preview for exams
+      return;
+    }
+    
     const token = authService.getToken();
     if (token) {
       try {
@@ -383,6 +535,12 @@ function ResourcesPageContent() {
   };
 
   const handlePreview = async (resource: DatabaseResource) => {
+    // If it's an exam, use ExamViewerModal instead
+    if (resource.resourceType?.toLowerCase() === 'exam') {
+      setSelectedExamId(resource.id);
+      return;
+    }
+    
     const token = authService.getToken();
     if (token) {
       try {
@@ -403,17 +561,173 @@ function ResourcesPageContent() {
     if (!token) return;
 
     try {
-      const response = await fetch(`${API_URL}/documents/${id}`, {
+      // Find the resource to check its type
+      const resource = resources.find(r => r.id === id);
+      
+      if (!resource) {
+        console.error('Resource not found in local state:', id);
+        toast.error('Resource not found');
+        return;
+      }
+
+      // Determine if it's an exam based on storageUrl being empty/null
+      // AI-generated exams don't have files, so storageUrl is empty
+      const isExam = !resource.storageUrl;
+      
+      console.log('Deleting resource:', {
+        id,
+        title: resource.title,
+        isExam,
+        storageUrl: resource.storageUrl,
+        resourceType: resource.resourceType,
+      });
+      
+      // Use appropriate endpoint based on resource type
+      const endpoint = isExam ? `${API_URL}/exams/${id}` : `${API_URL}/documents/${id}`;
+      
+      console.log('DELETE request to:', endpoint);
+      
+      const response = await fetch(endpoint, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
 
       if (response.ok) {
+        toast.success(`${isExam ? 'Exam' : 'Document'} deleted successfully`);
         fetchMyResources(); // Refresh list
+        setDeleteConfirm(null);
+      } else {
+        const errorText = await response.text();
+        console.error(`Failed to delete ${isExam ? 'exam' : 'document'}:`, {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText,
+        });
+        
+        // More specific error messages
+        if (response.status === 404) {
+          toast.error(`${isExam ? 'Exam' : 'Document'} not found. It may have already been deleted.`);
+          // Refresh the list anyway to remove stale data
+          fetchMyResources();
+        } else if (response.status === 403) {
+          toast.error('You do not have permission to delete this resource');
+        } else {
+          toast.error(`Failed to delete: ${response.statusText}`);
+        }
         setDeleteConfirm(null);
       }
     } catch (error) {
       console.error('Failed to delete resource:', error);
+      toast.error('An error occurred while deleting');
+      setDeleteConfirm(null);
+    }
+  };
+
+  // Bulk delete resources
+  const handleBulkDelete = async () => {
+    if (selectedResources.size === 0) {
+      alert('No resources selected');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete ${selectedResources.size} resource(s)?`)) {
+      return;
+    }
+
+    const token = authService.getToken();
+    if (!token) return;
+
+    setBulkDeleting(true);
+    try {
+      const deletePromises = Array.from(selectedResources).map(resourceId => {
+        const resource = resources.find(r => r.id === resourceId);
+        
+        // If storageUrl is empty or missing, it's an AI-generated exam
+        // Otherwise, it's a regular uploaded document
+        const isAIExam = !resource?.storageUrl || resource.storageUrl.trim() === '';
+        const endpoint = isAIExam 
+          ? `${API_URL}/exams/${resourceId}` 
+          : `${API_URL}/documents/${resourceId}`;
+        
+        console.log(`[BulkDelete] ${resourceId}: ${isAIExam ? 'AI Exam' : 'Document'} -> ${endpoint}`);
+        
+        return fetch(endpoint, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      });
+
+      const results = await Promise.allSettled(deletePromises);
+      
+      // Check which ones actually succeeded (HTTP 200-299)
+      const successfulIds = new Set<string>();
+      const forbiddenIds = new Set<string>();
+      const errorIds = new Set<string>();
+      
+      Array.from(selectedResources).forEach((resourceId, index) => {
+        const result = results[index];
+        if (result.status === 'fulfilled' && result.value.ok) {
+          successfulIds.add(resourceId);
+        } else if (result.status === 'fulfilled' && result.value.status === 403) {
+          forbiddenIds.add(resourceId);
+          console.warn(`[BulkDelete] Permission denied for ${resourceId}`);
+        } else if (result.status === 'fulfilled') {
+          errorIds.add(resourceId);
+          console.error(`[BulkDelete] Failed ${resourceId}: HTTP ${result.value.status}`);
+        } else {
+          errorIds.add(resourceId);
+          console.error(`[BulkDelete] Failed ${resourceId}:`, result.reason);
+        }
+      });
+
+      const successCount = successfulIds.size;
+      const forbiddenCount = forbiddenIds.size;
+      const errorCount = errorIds.size;
+
+      // Remove only successfully deleted resources from local state
+      setResources(prev => prev.filter(r => !successfulIds.has(r.id)));
+      setSelectedResources(new Set());
+
+      // Show detailed results
+      let message = '';
+      if (successCount > 0) {
+        message += `✓ Successfully deleted ${successCount} resource(s)`;
+      }
+      if (forbiddenCount > 0) {
+        message += `\n⚠ ${forbiddenCount} resource(s) belong to other users (permission denied)`;
+      }
+      if (errorCount > 0) {
+        message += `\n❌ ${errorCount} resource(s) failed to delete (server error)`;
+      }
+      
+      alert(message || 'No resources were deleted');
+    } catch (error) {
+      console.error('Failed to bulk delete:', error);
+      alert('❌ Failed to delete resources');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  // Toggle resource selection
+  const toggleResourceSelection = (resourceId: string) => {
+    setSelectedResources(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(resourceId)) {
+        newSet.delete(resourceId);
+      } else {
+        newSet.add(resourceId);
+      }
+      return newSet;
+    });
+  };
+
+  // Select all resources in current view
+  const toggleSelectAll = () => {
+    if (selectedResources.size === filtered.length && filtered.length > 0) {
+      setSelectedResources(new Set());
+    } else {
+      setSelectedResources(new Set(filtered.map(r => r.id)));
     }
   };
 
@@ -446,20 +760,16 @@ function ResourcesPageContent() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-2xl font-bold text-[#0d1b3e]">
-            My Resources
-          </h1>
-          <p className="text-sm text-[#8899bb] mt-1">Manage your uploaded courses and bookmarked materials</p>
-        </div>
-        <a
-          href="/dashboard/upload"
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0d1b3e] text-white text-sm font-semibold hover:bg-[#1a2d5a] transition-colors"
-        >
-          <Upload className="w-4 h-4" />
-          Upload New
-        </a>
+      <div className="flex items-center justify-end">
+        {authService.getUser()?.role !== 'student' && (
+          <a
+            href="/dashboard/upload"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0d1b3e] text-white text-sm font-semibold hover:bg-[#1a2d5a] transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Upload New
+          </a>
+        )}
       </div>
 
       
@@ -467,42 +777,151 @@ function ResourcesPageContent() {
       {/* Main Tab Navigation */}
       <div className="bg-white rounded-2xl border border-[#edf0f7] p-2">
         <div className="flex gap-2">
-          <button
-            onClick={() => setMainTab("uploads")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all ${
-              mainTab === "uploads"
-                ? "bg-[#63b3ed] text-white shadow-sm"
-                : "text-[#8899bb] hover:bg-[#f9faff]"
-            }`}
-          >
-            <Upload className="w-5 h-5" />
-            <span>My Uploads</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-              mainTab === "uploads" ? "bg-white/20 text-white" : "bg-[#edf0f7] text-[#8899bb]"
-            }`}>
-              {resources.length}
-            </span>
-          </button>
-          <button
-            onClick={() => setMainTab("bookmarks")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all ${
-              mainTab === "bookmarks"
-                ? "bg-[#63b3ed] text-white shadow-sm"
-                : "text-[#8899bb] hover:bg-[#f9faff]"
-            }`}
-          >
-            <Bookmark className="w-5 h-5" />
-            <span>Bookmarks</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-              mainTab === "bookmarks" ? "bg-white/20 text-white" : "bg-[#edf0f7] text-[#8899bb]"
-            }`}>
-              {bookmarkedResources.length}
-            </span>
-          </button>
+          {authService.getUser()?.role === 'student' ? (
+            // Student view - only library (bookmarks has its own page)
+            <div className="w-full text-center py-2">
+              <div className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-[#63b3ed] text-white shadow-sm">
+                <Library className="w-5 h-5" />
+                <span className="font-medium">My Library</span>
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white/20 text-white">
+                  {purchasedResources.length}
+                </span>
+              </div>
+            </div>
+          ) : (
+            // Teacher/Admin view - all tabs
+            <>
+              <button
+                onClick={() => setMainTab("uploads")}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                  mainTab === "uploads"
+                    ? "bg-[#63b3ed] text-white shadow-sm"
+                    : "text-[#8899bb] hover:bg-[#f9faff]"
+                }`}
+              >
+                <Upload className="w-5 h-5" />
+                <span>Uploaded Resources</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                  mainTab === "uploads" ? "bg-white/20 text-white" : "bg-[#edf0f7] text-[#8899bb]"
+                }`}>
+                  {resources.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setMainTab("library")}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                  mainTab === "library"
+                    ? "bg-[#63b3ed] text-white shadow-sm"
+                    : "text-[#8899bb] hover:bg-[#f9faff]"
+                }`}
+              >
+                <ShoppingBag className="w-5 h-5" />
+                <span>My Library</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                  mainTab === "library" ? "bg-white/20 text-white" : "bg-[#edf0f7] text-[#8899bb]"
+                }`}>
+                  {purchasedResources.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setMainTab("bookmarks")}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                  mainTab === "bookmarks"
+                    ? "bg-[#63b3ed] text-white shadow-sm"
+                    : "text-[#8899bb] hover:bg-[#f9faff]"
+                }`}
+              >
+                <Bookmark className="w-5 h-5" />
+                <span>Bookmarks</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                  mainTab === "bookmarks" ? "bg-white/20 text-white" : "bg-[#edf0f7] text-[#8899bb]"
+                }`}>
+                  {bookmarkedResources.length}
+                </span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {mainTab === "bookmarks" ? (
+      {mainTab === "library" ? (
+        /* My Library (Purchased Resources) Content */
+        purchasedResources.length === 0 ? (
+          <div className="bg-white rounded-xl border border-[#edf0f7] p-12 text-center">
+            <div className="w-16 h-16 rounded-full bg-[#f6f8ff] flex items-center justify-center mx-auto mb-4">
+              <ShoppingBag className="w-8 h-8 text-[#8899bb]" />
+            </div>
+            <h2 className="text-lg font-semibold text-[#0d1b3e] mb-2">Your library is empty</h2>
+            <p className="text-sm text-[#8899bb] mb-6 max-w-md mx-auto">
+              Purchase resources from the marketplace to build your personal library!
+            </p>
+            <a
+              href="/dashboard/library"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[#63b3ed] text-white text-sm font-semibold hover:bg-[#4299e1] transition-colors"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              Browse Marketplace
+            </a>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {purchasedResources.map((resource) => (
+              <div key={resource.id} className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-md hover:border-[#63b3ed]/30 transition-all">
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center shrink-0">
+                    <FileText className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-[#0d1b3e] mb-1 truncate">{resource.title}</h3>
+                    <p className="text-xs text-[#8899bb]">{resource.subject} • {resource.classLevel}</p>
+                  </div>
+                </div>
+                
+                {/* Purchased Badge */}
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-green-50 border border-green-200">
+                    <BadgeCheck className="w-3.5 h-3.5 text-green-600" />
+                    <span className="text-xs font-semibold text-green-700">Purchased</span>
+                  </div>
+                  {resource.price && (
+                    <span className="text-xs text-[#8899bb]">{Number(resource.price).toFixed(2)} TND</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-[#8899bb] mb-4">
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>{resource.views || 0}</span>
+                  <Download className="w-3.5 h-3.5 ml-2" />
+                  <span>{resource.downloads || 0}</span>
+                  {resource.averageRating && Number(resource.averageRating) > 0 && (
+                    <>
+                      <Star className="w-3.5 h-3.5 ml-2 fill-yellow-400 text-yellow-400" />
+                      <span>{Number(resource.averageRating).toFixed(1)}</span>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handlePreview(resource)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#63b3ed] text-white text-xs font-medium hover:bg-[#4299e1] transition-colors"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    View
+                  </button>
+                  <button
+                    onClick={() => handleDownload(resource)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[#edf0f7] text-[#4a5568] text-xs font-medium hover:border-[#63b3ed] hover:text-[#63b3ed] hover:bg-[#f6f8ff] transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : mainTab === "bookmarks" ? (
         /* Bookmarks Content */
         bookmarkedResources.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#edf0f7] p-12 text-center">
@@ -793,6 +1212,91 @@ function ResourcesPageContent() {
             </p>
           </div>
 
+          {/* Bulk Actions Bar - Sticky */}
+          {filtered.length > 0 && (
+            <div className="sticky top-0 z-10 bg-white rounded-xl border-2 border-[#edf0f7] shadow-lg overflow-hidden">
+              <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 px-6 py-4 border-b border-indigo-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-3 cursor-pointer group">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={selectedResources.size === filtered.length && filtered.length > 0}
+                          onChange={toggleSelectAll}
+                          className="w-5 h-5 text-indigo-600 border-2 border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all cursor-pointer"
+                        />
+                        {selectedResources.size > 0 && selectedResources.size < filtered.length && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div className="w-2.5 h-2.5 bg-indigo-600 rounded-sm"></div>
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-sm font-semibold text-gray-700 group-hover:text-gray-900 transition-colors">
+                        Select All
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 border border-indigo-200">
+                        {filtered.length}
+                      </span>
+                    </label>
+                    
+                    {selectedResources.size > 0 && (
+                      <div className="flex items-center gap-2 pl-4 border-l-2 border-indigo-200">
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 shadow-sm">
+                          <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                          <span className="text-sm font-bold text-indigo-700">
+                            {selectedResources.size} selected
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setSelectedResources(new Set())}
+                          className="text-xs text-gray-500 hover:text-gray-700 font-medium underline underline-offset-2 transition-colors"
+                        >
+                          Clear selection
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {selectedResources.size > 0 && (
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={bulkDeleting}
+                      className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg transition-all transform hover:scale-105 active:scale-95 text-sm"
+                    >
+                      {bulkDeleting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>Deleting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-4 h-4" />
+                          <span>Delete Selected</span>
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-white/20 text-white border border-white/30">
+                            {selectedResources.size}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              {/* Selection info bar */}
+              {selectedResources.size > 0 && (
+                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
+                  <p className="text-xs text-blue-700">
+                    <span className="font-semibold">{selectedResources.size}</span> of <span className="font-semibold">{filtered.length}</span> resources selected
+                    {selectedResources.size === filtered.length && (
+                      <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-200 text-blue-800 font-semibold">All selected</span>
+                    )}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Results Grid */}
           {filtered.length === 0 ? (
             <div className="bg-white rounded-xl border border-[#edf0f7] p-12 text-center">
@@ -826,6 +1330,20 @@ function ResourcesPageContent() {
                   }`}
                 >
                   <div className="flex items-start gap-4">
+                    {/* Checkbox for bulk selection - Improved styling */}
+                    <div className="pt-2 relative group">
+                      <input
+                        type="checkbox"
+                        checked={selectedResources.has(r.id)}
+                        onChange={() => toggleResourceSelection(r.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-5 h-5 text-indigo-600 border-2 border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 cursor-pointer transition-all hover:border-indigo-400"
+                      />
+                      {selectedResources.has(r.id) && (
+                        <div className="absolute -inset-1 bg-indigo-100 rounded-lg opacity-20 animate-pulse pointer-events-none"></div>
+                      )}
+                    </div>
+
                     <div className="w-14 h-14 rounded-lg bg-[#f6f8ff] flex items-center justify-center text-[#63b3ed] shrink-0">
                       <FileText className="w-7 h-7" />
                     </div>
@@ -1081,11 +1599,20 @@ function ResourcesPageContent() {
       )}
 
       {/* Document Preview Modal */}
-      {previewDoc && (
+      {previewDoc && previewDoc.storageUrl && (
         <UniversalDocumentPreview
           fileUrl={previewDoc.storageUrl}
           fileName={previewDoc.originalName}
           onClose={() => setPreviewDoc(null)}
+        />
+      )}
+      
+      {/* Exam Viewer Modal */}
+      {selectedExamId && (
+        <ExamViewerModal
+          examId={selectedExamId}
+          isOpen={!!selectedExamId}
+          onClose={() => setSelectedExamId(null)}
         />
       )}
       

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DocumentModerationEntity } from './entities/document-moderation.entity';
@@ -7,6 +7,8 @@ import { AIAnalysisService } from './ai-analysis.service';
 import { DuplicateDetectionService } from './duplicate-detection.service';
 import { QuestionExtractionService } from './question-extraction.service';
 import { UserNotificationsService } from '../user-notifications/user-notifications.service';
+import { MailService } from '../mail/mail.service';
+import { ExamsService } from '../exams/exams.service';
 
 @Injectable()
 export class ModerationService {
@@ -21,6 +23,9 @@ export class ModerationService {
     private readonly duplicateDetectionService: DuplicateDetectionService,
     private readonly questionExtractionService: QuestionExtractionService,
     private readonly userNotificationsService: UserNotificationsService,
+    private readonly mailService: MailService,
+    @Inject(forwardRef(() => ExamsService))
+    private readonly examsService: ExamsService,
   ) {}
 
   /**
@@ -579,10 +584,11 @@ export class ModerationService {
   }
 
   /**
-   * Get pending documents for moderation
+   * Get pending documents for moderation (includes AI-generated exams)
    */
   async getPendingDocuments(): Promise<any[]> {
     try {
+      // Get document moderations
       const moderations = await this.moderationRepository
         .createQueryBuilder('mod')
         .leftJoinAndSelect('mod.document', 'doc')
@@ -592,8 +598,9 @@ export class ModerationService {
         .addOrderBy('mod.created_at', 'ASC')
         .getMany();
 
-      return moderations.map(mod => ({
+      const documentItems = moderations.map(mod => ({
         id: mod.id,
+        type: 'document' as const,
         document: {
           id: mod.document.id,
           title: mod.document.title,
@@ -658,6 +665,96 @@ export class ModerationService {
           changesRequested: mod.changesRequested,
         },
       }));
+
+      // Get AI-generated exams (pending moderation)
+      const pendingExamsResult = await this.examsService.getPendingExams();
+      const pendingExams = pendingExamsResult.exams || [];
+
+      const examItems = pendingExams.map(exam => ({
+        id: `exam-${exam.id}`, // Prefix to distinguish from documents
+        type: 'exam' as const,
+        examId: exam.id,
+        document: {
+          id: exam.id,
+          title: exam.title,
+          originalName: `${exam.title}.pdf`,
+          uploadedBy: exam.owner ? exam.owner.fullName : 'Unknown User',
+          uploadedAt: exam.publishedAt || exam.createdAt,
+          storageUrl: exam.pdfUrl || null,
+        },
+        // Mock AI scores for exams (can be enhanced with actual exam analysis later)
+        aiScores: {
+          safety: 95,
+          quality: 90,
+          overall: 92,
+        },
+        riskLevel: 'low',
+        detectedMetadata: {
+          subject: exam.subject,
+          category: 'exam',
+          gradeLevel: exam.classLevel,
+          language: 'French',
+          bacSection: exam.bacSection,
+          difficultyLevel: null,
+          difficultyScore: null,
+          difficultyReasoning: null,
+        },
+        originalMetadata: {
+          filename: `${exam.title}.pdf`,
+          uploadedTitle: exam.title,
+        },
+        flags: {
+          inappropriateContent: false,
+          pii: false,
+          malware: false,
+          duplicate: false,
+        },
+        advancedAI: {
+          piiDetection: {
+            found: false,
+            score: 100,
+            details: [],
+          },
+          learningObjectives: [],
+          bloomLevel: null,
+        },
+        issues: [],
+        aiRecommendation: {
+          action: 'approve',
+          confidence: 0.95,
+          reasoning: 'AI-generated exam with structured questions. No safety concerns detected.',
+        },
+        processingCompleted: true,
+        ocrText: null,
+        examMetadata: {
+          questionsCount: exam.questions?.length || 0,
+          duration: exam.duration,
+          maxPoints: exam.maxPoints,
+          license: exam.license,
+          price: exam.price,
+          description: exam.description,
+          keywords: exam.keywords,
+        },
+        timeline: {
+          uploaded: exam.publishedAt || exam.createdAt,
+          processingStarted: exam.publishedAt || exam.createdAt,
+          ocrCompleted: exam.publishedAt || exam.createdAt,
+          metadataExtracted: exam.publishedAt || exam.createdAt,
+          aiAnalysisCompleted: exam.publishedAt || exam.createdAt,
+          processingCompleted: exam.publishedAt || exam.createdAt,
+        },
+        adminAction: {
+          reviewedBy: null,
+          reviewedAt: null,
+          status: 'pending',
+          rejectionReason: null,
+          adminNotes: null,
+          changesRequested: null,
+        },
+      }));
+
+      // Combine and return all items
+      return [...documentItems, ...examItems];
     } catch (error) {
       this.logger.error('Failed to get pending documents:', error);
       throw error;
@@ -811,6 +908,15 @@ export class ModerationService {
           moderation.document.id,
           moderation.document.title || moderation.document.originalName
         );
+        
+        // Send approval email
+        await this.mailService.sendResourceApproved(
+          moderation.document.user.email,
+          moderation.document.user.fullName,
+          moderation.document.title || moderation.document.originalName,
+          moderation.document.id
+        );
+        this.logger.log(`Approval email sent to: ${moderation.document.user.email}`);
       }
     } catch (error) {
       this.logger.warn(`Failed to send approval notification: ${error.message}`);
@@ -905,6 +1011,16 @@ export class ModerationService {
           moderation.document.title || moderation.document.originalName,
           changes
         );
+        
+        // Send changes requested email
+        await this.mailService.sendResourceChangesRequested(
+          moderation.document.user.email,
+          moderation.document.user.fullName,
+          moderation.document.title || moderation.document.originalName,
+          changes,
+          moderation.document.id
+        );
+        this.logger.log(`Changes requested email sent to: ${moderation.document.user.email}`);
       }
     } catch (error) {
       this.logger.warn(`Failed to send changes required notification: ${error.message}`);

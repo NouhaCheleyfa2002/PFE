@@ -400,7 +400,7 @@ export default function UploadPage() {
             
             // Show duplicate warning if needed
             if (data.isDuplicate) {
-              setErrorMessage(`⚠️ Warning: This document appears to be ${Math.round((data.duplicateSimilarity || 0) * 100)}% similar to an existing document. Consider if this is truly new content.`);
+              setErrorMessage(` Warning: This document appears to be ${Math.round((data.duplicateSimilarity || 0) * 100)}% similar to an existing document. Consider if this is truly new content.`);
             }
             
             return;
@@ -1360,46 +1360,31 @@ export default function UploadPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1
-              style={{ fontFamily: "var(--font-heading), sans-serif" }}
-              className="text-2xl font-bold text-[#0d1b3e]"
-            >
-              Upload & Process Documents
-            </h1>
-            <p className="text-sm text-[#8899bb] mt-1">
-              Upload PDFs for automatic OCR processing or share other educational resources
-            </p>
-          </div>
-          
-          {/* View Mode Toggle */}
-          <div className="flex items-center gap-2 bg-[#f9faff] p-1 rounded-lg border border-[#edf0f7]">
-            <button
-              onClick={() => setViewMode("upload")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                viewMode === "upload"
-                  ? "bg-white text-[#0d1b3e] shadow-sm"
-                  : "text-[#8899bb] hover:text-[#0d1b3e]"
-              }`}
-            >
-              <Upload className="w-4 h-4" />
-              Upload
-            </button>
-            <button
-              onClick={() => setViewMode("documents")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                viewMode === "documents"
-                  ? "bg-white text-[#0d1b3e] shadow-sm"
-                  : "text-[#8899bb] hover:text-[#0d1b3e]"
-              }`}
-            >
-              <FileSearch className="w-4 h-4" />
-              My Documents ({documents.length})
-            </button>
-          </div>
+      {/* View Mode Toggle */}
+      <div className="flex items-center justify-end">
+        <div className="flex items-center gap-2 bg-[#f9faff] p-1 rounded-lg border border-[#edf0f7]">
+          <button
+            onClick={() => setViewMode("upload")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              viewMode === "upload"
+                ? "bg-white text-[#0d1b3e] shadow-sm"
+                : "text-[#8899bb] hover:text-[#0d1b3e]"
+            }`}
+          >
+            <Upload className="w-4 h-4" />
+            Upload
+          </button>
+          <button
+            onClick={() => setViewMode("documents")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              viewMode === "documents"
+                ? "bg-white text-[#0d1b3e] shadow-sm"
+                : "text-[#8899bb] hover:text-[#0d1b3e]"
+            }`}
+          >
+            <FileSearch className="w-4 h-4" />
+            My Documents ({documents.length})
+          </button>
         </div>
       </div>
 

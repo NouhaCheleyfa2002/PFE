@@ -5,6 +5,15 @@ import { X, Sparkles, FileText, Database, Shuffle, Clock, Award, Brain, Loader2,
 import { toast } from 'react-hot-toast';
 import { generateExam, type GenerateExamRequest } from '@/lib/api/ai';
 import { authService } from '@/lib/auth';
+import { 
+  EDUCATION_LEVELS, 
+  BAC_SECTIONS,
+  getSubjectsForLevel,
+  getSubjectsForBacSection,
+  requiresBacSection,
+  type EducationLevel,
+  type BacSection 
+} from '@/lib/education-config';
 
 interface AIExamGeneratorWizardProps {
   isOpen: boolean;
@@ -26,10 +35,20 @@ interface Document {
 
 interface Question {
   id: string;
-  text: string;
-  type: string;
-  subject?: string;
+  questionText: string;
+  questionType: string;
+  topic?: string;
   difficulty?: string;
+  documentId?: string;
+  pageNumber?: number;
+  options?: string[];
+  correctAnswer?: string;
+  document?: {
+    id: string;
+    title: string;
+    classLevel?: string; // Tunisian education level from document
+    subject?: string;
+  };
 }
 
 interface ExamConfig {
@@ -54,8 +73,8 @@ interface ExamConfig {
 
 const QUESTION_SOURCES = [
   { id: 'document' as QuestionSource, label: 'Uploaded Document', icon: FileText, description: 'Generate from a specific document' },
-  { id: 'extracted' as QuestionSource, label: 'Extracted Questions', icon: Database, description: 'Use AI-extracted questions' },
-  { id: 'question-bank' as QuestionSource, label: 'Question Bank', icon: Database, description: 'Select from your question bank' },
+  { id: 'extracted' as QuestionSource, label: 'AI-Generated Questions', icon: Sparkles, description: 'Use AI-extracted and generated questions' },
+  { id: 'question-bank' as QuestionSource, label: 'Manual Questions', icon: Database, description: 'Select from manually created questions' },
   { id: 'mixed' as QuestionSource, label: 'Mixed Sources', icon: Shuffle, description: 'Combine multiple sources' },
 ];
 
@@ -75,6 +94,41 @@ const BLOOM_LEVELS = [
   { id: 'create' as BloomLevel, label: 'Create', description: 'Produce new work' },
   { id: 'mixed' as BloomLevel, label: 'Mixed', description: 'All levels' },
 ];
+
+// Deduplication helper - removes questions with very similar text
+function removeDuplicateQuestions(questions: Question[]): Question[] {
+  const seen = new Map<string, Question>();
+  
+  for (const question of questions) {
+    // Normalize question text for comparison (lowercase, remove extra spaces, remove punctuation)
+    const normalizedText = question.questionText
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .replace(/\s+/g, ' ')     // Normalize spaces
+      .trim();
+    
+    // If we haven't seen this question text before, keep it
+    if (!seen.has(normalizedText)) {
+      seen.set(normalizedText, question);
+    } else {
+      // If duplicate found, keep the one with more complete data
+      const existing = seen.get(normalizedText)!;
+      const hasMoreData = 
+        (question.options && question.options.length > (existing.options?.length || 0)) ||
+        (question.correctAnswer && !existing.correctAnswer) ||
+        (question.document && !existing.document);
+      
+      if (hasMoreData) {
+        console.log(`[Wizard Dedup] Replacing duplicate with more complete version: ${question.id}`);
+        seen.set(normalizedText, question);
+      } else {
+        console.log(`[Wizard Dedup] Skipping duplicate question: ${question.id}`);
+      }
+    }
+  }
+  
+  return Array.from(seen.values());
+}
 
 export default function AIExamGeneratorWizard({
   isOpen,
@@ -107,6 +161,69 @@ export default function AIExamGeneratorWizard({
   const [extractedQuestions, setExtractedQuestions] = useState<Question[]>([]);
   const [questionBankQuestions, setQuestionBankQuestions] = useState<Question[]>([]);
   const [loadingData, setLoadingData] = useState(false);
+  
+  // Filtering states - like upload page
+  const [selectedEducationLevel, setSelectedEducationLevel] = useState<EducationLevel | ''>('');
+  const [selectedBacSection, setSelectedBacSection] = useState<BacSection | ''>('');
+  const [selectedSubject, setSelectedSubject] = useState<string>('');
+  const [availableSubjects, setAvailableSubjects] = useState<string[]>([]);
+  
+  // Update available subjects when level or bac section changes
+  useEffect(() => {
+    if (selectedEducationLevel) {
+      if (requiresBacSection(selectedEducationLevel) && selectedBacSection) {
+        const subjects = getSubjectsForBacSection(selectedEducationLevel, selectedBacSection);
+        setAvailableSubjects(subjects.map(s => s.name));
+      } else if (!requiresBacSection(selectedEducationLevel)) {
+        const subjects = getSubjectsForLevel(selectedEducationLevel);
+        setAvailableSubjects(subjects.map(s => s.name));
+      } else {
+        setAvailableSubjects([]);
+      }
+    } else {
+      setAvailableSubjects([]);
+    }
+    // Reset subject when level/section changes
+    setSelectedSubject('');
+  }, [selectedEducationLevel, selectedBacSection]);
+  
+  // Get filtered questions based on selected education level and subject
+  const getFilteredQuestions = (questions: Question[]) => {
+    console.log('Filtering questions:', {
+      total: questions.length,
+      selectedLevel: selectedEducationLevel,
+      selectedSubject: selectedSubject,
+      sampleQuestion: questions[0]
+    });
+    
+    let filtered = questions;
+    
+    if (selectedEducationLevel) {
+      filtered = filtered.filter(q => {
+        const questionLevel = q.document?.classLevel;
+        const matches = questionLevel === selectedEducationLevel;
+        if (!matches && questions.indexOf(q) === 0) {
+          console.log('Level mismatch:', { questionLevel, selectedLevel: selectedEducationLevel });
+        }
+        return matches;
+      });
+      console.log('After level filter:', filtered.length);
+    }
+    
+    if (selectedSubject) {
+      filtered = filtered.filter(q => {
+        const questionSubject = q.document?.subject;
+        const matches = questionSubject === selectedSubject || q.topic === selectedSubject;
+        if (!matches && filtered.indexOf(q) === 0) {
+          console.log('Subject mismatch:', { questionSubject, questionTopic: q.topic, selectedSubject });
+        }
+        return matches;
+      });
+      console.log('After subject filter:', filtered.length);
+    }
+    
+    return filtered;
+  };
   const [searchTerm, setSearchTerm] = useState('');
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
@@ -132,16 +249,42 @@ export default function AIExamGeneratorWizard({
         setDocuments(data.documents || []);
       }
 
-      if (config.source === 'extracted' || config.source === 'question-bank' || config.source === 'mixed') {
-        // Load extracted questions (they're all in exam-questions table)
-        const response = await fetch(`${API_URL}/exam-questions?limit=100`, {
+      if (config.source === 'extracted' || config.source === 'mixed') {
+        // Load AI-generated questions (ai_extracted, ai_generated, ai_improved)
+        const response = await fetch(`${API_URL}/exam-questions?limit=200`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await response.json();
         
         if (data.success && data.questions) {
-          setExtractedQuestions(data.questions);
-          setQuestionBankQuestions(data.questions);
+          // Filter to only AI-sourced questions
+          const aiQuestions = data.questions.filter((q: any) => 
+            q.sourceType === 'ai_extracted' || 
+            q.sourceType === 'ai_generated' || 
+            q.sourceType === 'ai_improved' ||
+            !q.sourceType // Backward compatibility
+          );
+          const deduplicated = removeDuplicateQuestions(aiQuestions);
+          console.log('AI-generated questions sample:', aiQuestions[0]); // DEBUG
+          console.log('Total AI questions:', aiQuestions.length); // DEBUG
+          console.log('After deduplication:', deduplicated.length); // DEBUG
+          setExtractedQuestions(deduplicated);
+        }
+      }
+      
+      if (config.source === 'question-bank') {
+        // Load manually created questions only
+        const response = await fetch(`${API_URL}/exam-questions?limit=200&sourceType=manual`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json();
+        
+        if (data.success && data.questions) {
+          const deduplicated = removeDuplicateQuestions(data.questions);
+          console.log('Manual questions sample:', data.questions[0]); // DEBUG
+          console.log('Total manual questions:', data.questions.length); // DEBUG
+          console.log('After deduplication:', deduplicated.length); // DEBUG
+          setQuestionBankQuestions(deduplicated);
         }
       }
     } catch (error) {
@@ -190,13 +333,33 @@ export default function AIExamGeneratorWizard({
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
+      // Map source values to backend enum
+      const sourceMap = {
+        'document': 'uploaded_document',
+        'extracted': 'extracted_questions',
+        'question-bank': 'question_bank',
+        'mixed': 'mixed'
+      };
+
+      // Convert questionTypes booleans to questionDistribution numbers
+      const totalQuestions = config.numQuestions;
+      const enabledTypes = Object.entries(config.questionTypes).filter(([_, enabled]) => enabled);
+      const questionsPerType = Math.floor(totalQuestions / enabledTypes.length);
+      const remainder = totalQuestions % enabledTypes.length;
+      
+      const questionDistribution: any = {};
+      enabledTypes.forEach(([type], index) => {
+        const count = questionsPerType + (index === 0 ? remainder : 0);
+        questionDistribution[type] = count;
+      });
+
       // Map frontend config to API request
       const request: GenerateExamRequest = {
-        source: config.source,
+        source: sourceMap[config.source as keyof typeof sourceMap] as any,
         documentId: config.selectedDocuments[0], // Use first document
         questionIds: config.selectedQuestions,
         totalQuestions: config.numQuestions,
-        questionTypes: config.questionTypes,
+        questionDistribution,
         difficulty: config.difficulty,
         bloomLevel: config.bloomLevel,
         durationMinutes: config.duration,
@@ -385,26 +548,93 @@ export default function AIExamGeneratorWizard({
                 </div>
               )}
 
-              {/* Extracted Questions Selection */}
+              {/* AI-Generated Questions Selection */}
               {(config.source === 'extracted' || config.source === 'mixed') && (
                 <div className="border border-gray-200 rounded-xl p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-semibold text-gray-900">Select Extracted Questions</h4>
+                    <h4 className="font-semibold text-gray-900">AI-Generated Questions</h4>
                     <span className="text-sm text-gray-600">{config.selectedQuestions.length} selected</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">Questions extracted or generated by AI from documents</p>
+
+                  {/* Education Level Selection */}
+                  <div className="space-y-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Education Level *</label>
+                      <select
+                        value={selectedEducationLevel}
+                        onChange={(e) => {
+                          setSelectedEducationLevel(e.target.value as EducationLevel | '');
+                          setSelectedBacSection('');
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      >
+                        <option value="">Select Education Level</option>
+                        {EDUCATION_LEVELS.map(level => (
+                          <option key={level} value={level}>{level}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Bac Section (only for 3rd Secondary and Bac) */}
+                    {selectedEducationLevel && requiresBacSection(selectedEducationLevel) && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Bac Section *</label>
+                        <select
+                          value={selectedBacSection}
+                          onChange={(e) => setSelectedBacSection(e.target.value as BacSection | '')}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                        >
+                          <option value="">Select Bac Section</option>
+                          {BAC_SECTIONS.map(section => (
+                            <option key={section.id} value={section.id}>{section.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Subject Selection */}
+                    {availableSubjects.length > 0 && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Subject</label>
+                        <select
+                          value={selectedSubject}
+                          onChange={(e) => setSelectedSubject(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                        >
+                          <option value="">All Subjects</option>
+                          {availableSubjects.map(subject => (
+                            <option key={subject} value={subject}>{subject}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
 
                   {loadingData ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
                     </div>
+                  ) : !selectedEducationLevel ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                      <FileText className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-600 text-sm">Select an education level to see questions</p>
+                    </div>
                   ) : extractedQuestions.length === 0 ? (
-                    <div className="text-center py-8">
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
                       <Database className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                       <p className="text-gray-600 text-sm">No extracted questions available</p>
+                      <p className="text-gray-500 text-xs mt-1">Upload documents to extract questions</p>
+                    </div>
+                  ) : getFilteredQuestions(extractedQuestions).length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                      <Search className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-600 text-sm">No questions found for this selection</p>
+                      <p className="text-gray-500 text-xs mt-1">Try a different education level or subject</p>
                     </div>
                   ) : (
                     <div className="max-h-64 overflow-y-auto space-y-2">
-                      {extractedQuestions.slice(0, 50).map(question => (
+                      {getFilteredQuestions(extractedQuestions).slice(0, 50).map(question => (
                         <label
                           key={question.id}
                           className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -416,10 +646,12 @@ export default function AIExamGeneratorWizard({
                             className="mt-1 w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
                           />
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm text-gray-900 line-clamp-2">{question.text}</div>
-                            <div className="text-xs text-gray-600 mt-1">
-                              <span className="mr-2 capitalize">{question.type}</span>
-                              {question.difficulty && <span className="capitalize">{question.difficulty}</span>}
+                            <div className="text-sm text-gray-900 line-clamp-2">{question.questionText}</div>
+                            <div className="text-xs text-gray-500 mt-1 flex gap-2 flex-wrap">
+                              <span className="capitalize">{question.questionType.replace('_', ' ')}</span>
+                              {question.document?.classLevel && <span>• {question.document.classLevel}</span>}
+                              {(question.topic || question.document?.subject) && <span>• {question.topic || question.document?.subject}</span>}
+                              {question.difficulty && <span className="capitalize">• {question.difficulty}</span>}
                             </div>
                           </div>
                         </label>
@@ -429,20 +661,80 @@ export default function AIExamGeneratorWizard({
                 </div>
               )}
 
-              {/* Question Bank Selection */}
+              {/* Manual Questions Selection */}
               {(config.source === 'question-bank' || config.source === 'mixed') && (
                 <div className="border border-gray-200 rounded-xl p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-semibold text-gray-900">Select from Question Bank</h4>
+                    <h4 className="font-semibold text-gray-900">Manual Questions</h4>
                     <span className="text-sm text-gray-600">{config.selectedQuestions.length} selected</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">Questions manually created by teachers</p>
+
+                  {/* Education Level Selection */}
+                  <div className="space-y-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Education Level *</label>
+                      <select
+                        value={selectedEducationLevel}
+                        onChange={(e) => {
+                          setSelectedEducationLevel(e.target.value as EducationLevel | '');
+                          setSelectedBacSection('');
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      >
+                        <option value="">Select Education Level</option>
+                        {EDUCATION_LEVELS.map(level => (
+                          <option key={level} value={level}>{level}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Bac Section (only for 3rd Secondary and Bac) */}
+                    {selectedEducationLevel && requiresBacSection(selectedEducationLevel) && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Bac Section *</label>
+                        <select
+                          value={selectedBacSection}
+                          onChange={(e) => setSelectedBacSection(e.target.value as BacSection | '')}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                        >
+                          <option value="">Select Bac Section</option>
+                          {BAC_SECTIONS.map(section => (
+                            <option key={section.id} value={section.id}>{section.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Subject Selection */}
+                    {availableSubjects.length > 0 && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Subject</label>
+                        <select
+                          value={selectedSubject}
+                          onChange={(e) => setSelectedSubject(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                        >
+                          <option value="">All Subjects</option>
+                          {availableSubjects.map(subject => (
+                            <option key={subject} value={subject}>{subject}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
 
                   {loadingData ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
                     </div>
+                  ) : !selectedEducationLevel ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                      <Database className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-600 text-sm">Select an education level to see questions</p>
+                    </div>
                   ) : questionBankQuestions.length === 0 ? (
-                    <div className="text-center py-8">
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
                       <Database className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                       <p className="text-gray-600 text-sm mb-4">No questions in your bank</p>
                       <button
@@ -452,9 +744,15 @@ export default function AIExamGeneratorWizard({
                         Go to Question Bank
                       </button>
                     </div>
+                  ) : getFilteredQuestions(questionBankQuestions).length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                      <Search className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-600 text-sm">No questions found for this selection</p>
+                      <p className="text-gray-500 text-xs mt-1">Try a different education level or subject</p>
+                    </div>
                   ) : (
                     <div className="max-h-64 overflow-y-auto space-y-2">
-                      {questionBankQuestions.slice(0, 50).map(question => (
+                      {getFilteredQuestions(questionBankQuestions).slice(0, 50).map(question => (
                         <label
                           key={question.id}
                           className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -466,10 +764,12 @@ export default function AIExamGeneratorWizard({
                             className="mt-1 w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
                           />
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm text-gray-900 line-clamp-2">{question.text}</div>
-                            <div className="text-xs text-gray-600 mt-1">
-                              <span className="mr-2 capitalize">{question.type}</span>
-                              {question.difficulty && <span className="capitalize">{question.difficulty}</span>}
+                            <div className="text-sm text-gray-900 line-clamp-2">{question.questionText}</div>
+                            <div className="text-xs text-gray-500 mt-1 flex gap-2 flex-wrap">
+                              <span className="capitalize">{question.questionType.replace('_', ' ')}</span>
+                              {question.document?.classLevel && <span>• {question.document.classLevel}</span>}
+                              {(question.topic || question.document?.subject) && <span>• {question.topic || question.document?.subject}</span>}
+                              {question.difficulty && <span className="capitalize">• {question.difficulty}</span>}
                             </div>
                           </div>
                         </label>

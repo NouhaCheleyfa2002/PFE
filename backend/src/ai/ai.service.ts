@@ -1,7 +1,7 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, IsNull } from 'typeorm';
 import axios, { AxiosInstance } from 'axios';
 import { ExamQuestionEntity } from '../exam-pipeline/entities/exam-question.entity';
 
@@ -158,6 +158,262 @@ export class AiService {
     }
   }
 
+  /**
+   * Structured generation with lower temperature for reliable, consistent output
+   * Use for question transformation, formatting tasks, etc.
+   */
+  private async structuredGeneration(
+    prompt: string,
+    systemPrompt: string,
+  ): Promise<string> {
+    this.validateApiKey();
+
+    if (!prompt || prompt.trim() === '') {
+      throw new HttpException('Prompt cannot be empty', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const messages: DeepSeekMessage[] = [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ];
+
+      const requestData: DeepSeekRequest = {
+        model: this.model,
+        messages,
+        temperature: 0.2, // Lower temperature for more consistent, structured output
+        max_tokens: 2000,
+      };
+
+      const response = await this.axiosInstance.post<DeepSeekResponse>(
+        '/chat/completions',
+        requestData,
+      );
+
+      if (!response.data.choices || response.data.choices.length === 0) {
+        throw new Error('No response from DeepSeek API');
+      }
+
+      const aiResponse = response.data.choices[0].message.content;
+      
+      this.logger.log(
+        `Structured generation completed. Tokens used: ${response.data.usage.total_tokens}`,
+      );
+
+      return aiResponse;
+    } catch (error) {
+      this.logger.error('DeepSeek API error in structured generation:', error);
+
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 401) {
+          throw new HttpException(
+            'Invalid DeepSeek API key',
+            HttpStatus.UNAUTHORIZED,
+          );
+        } else if (error.response?.status === 429) {
+          throw new HttpException(
+            'Rate limit exceeded. Please try again later.',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        } else if (error.response?.status === 400) {
+          throw new HttpException(
+            `Bad request: ${error.response.data?.error?.message || 'Invalid request'}`,
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+      }
+
+      throw new HttpException(
+        'Failed to communicate with AI service',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Validate generated question variation
+   * Backend controls the format - do not trust AI output blindly
+   */
+  private validateGeneratedVariation(
+    variation: any,
+    request: {
+      transformation: string;
+      questionType: string;
+    },
+  ): void {
+    if (!variation.text) {
+      throw new Error('Generated question is empty');
+    }
+
+    if (!variation.correctAnswer) {
+      throw new Error('Generated answer is empty');
+    }
+
+    const text = variation.text.trim();
+    const type = request.questionType;
+
+    // ----------------------------------
+    // Must not look like an answer
+    // ----------------------------------
+
+    const answerPrefixes = [
+      /^answer\s*:/i,
+      /^correct answer\s*:/i,
+      /^solution\s*:/i,
+      /^la réponse\s*:/i,
+      /^réponse\s*:/i,
+      /^الجواب\s*:/i,
+      /^الإجابة\s*:/i,
+    ];
+
+    if (answerPrefixes.some(regex => regex.test(text))) {
+      throw new Error(
+        'AI generated an answer instead of a question',
+      );
+    }
+
+    // ----------------------------------
+    // Question must have enough content
+    // ----------------------------------
+
+    if (text.length < 15) {
+      throw new Error(
+        'Generated question is too short',
+      );
+    }
+
+    // ----------------------------------
+    // MCQ
+    // ----------------------------------
+
+    if (type === 'mcq') {
+      if (
+        !Array.isArray(variation.options) ||
+        variation.options.length !== 4
+      ) {
+        throw new Error(
+          'MCQ must contain exactly 4 options',
+        );
+      }
+
+      // Check if answer matches any option (flexible matching)
+      const normalizeText = (text: string) => {
+        return text
+          .toLowerCase()
+          .trim()
+          .replace(/^[A-D][.)\]]\s*/i, '') // Remove letter prefix like "A) " or "B." or "C]"
+          .replace(/\s+/g, ' ')             // Normalize whitespace
+          .replace(/[.,;!?،؛]/g, '');      // Remove only common punctuation (not all chars)
+      };
+      
+      const answer = variation.correctAnswer.trim();
+      const normalizedAnswer = normalizeText(answer);
+      
+      // Check if answer is just a letter (A, B, C, D)
+      if (/^[A-D]$/i.test(answer)) {
+        // Convert letter to index (A=0, B=1, C=2, D=3)
+        const answerIndex = answer.toUpperCase().charCodeAt(0) - 65;
+        if (answerIndex >= 0 && answerIndex < variation.options.length) {
+          // Replace answer with the actual option text
+          variation.correctAnswer = variation.options[answerIndex];
+          this.logger.log(
+            `[MCQ] Converted letter answer "${answer}" to option text: "${variation.correctAnswer}"`
+          );
+          return; // Valid - we've fixed it
+        }
+      }
+      
+      const answerExists = variation.options.some((option: string) => {
+        const normalizedOption = normalizeText(option);
+        
+        // Exact match after normalization
+        if (normalizedOption === normalizedAnswer) return true;
+        
+        // Option contains answer (for partial matching)
+        if (normalizedOption.includes(normalizedAnswer) && normalizedAnswer.length > 3) return true;
+        
+        // Answer contains option (for when answer is more detailed)
+        if (normalizedAnswer.includes(normalizedOption) && normalizedOption.length > 3) return true;
+        
+        return false;
+      });
+
+      if (!answerExists) {
+        // Log for debugging
+        this.logger.warn(
+          `MCQ validation failed. Answer: "${variation.correctAnswer}", Normalized: "${normalizeText(variation.correctAnswer)}", Options: ${JSON.stringify(variation.options)}`
+        );
+        this.logger.warn(
+          `Normalized options: ${variation.options.map((o: string) => normalizeText(o)).join(' | ')}`
+        );
+        throw new Error(
+          `MCQ correct answer does not match an option. Answer: "${variation.correctAnswer}"`,
+        );
+      }
+    }
+
+    // ----------------------------------
+    // TRUE / FALSE
+    // ----------------------------------
+
+    if (type === 'true_false') {
+      const answer =
+        variation.correctAnswer
+          .toLowerCase()
+          .trim();
+
+      const validAnswers = [
+        'true',
+        'false',
+        'vrai',
+        'faux',
+        'صح',
+        'خطأ',
+        'صحيح',      // Additional Arabic: correct/true
+        'خاطئ',      // Additional Arabic: false/incorrect
+        'صواب',      // Additional Arabic: correct
+        'خطا',       // Additional Arabic: error (without hamza)
+        't',         // Abbreviation
+        'f',         // Abbreviation
+      ];
+
+      if (!validAnswers.includes(answer)) {
+        throw new Error(
+          `Invalid True/False answer: "${variation.correctAnswer}". Expected one of: ${validAnswers.join(', ')}`,
+        );
+      }
+
+      if (
+        !text.includes('?') &&
+        !/vrai ou faux/i.test(text) &&
+        !/true or false/i.test(text) &&
+        !text.includes('صح أم خطأ')
+      ) {
+        throw new Error(
+          'True/False question is not properly formatted',
+        );
+      }
+    }
+
+    // ----------------------------------
+    // FILL BLANK
+    // ----------------------------------
+
+    if (type === 'fill_blank') {
+      if (!text.includes('_____')) {
+        throw new Error(
+          'Fill-blank question must contain _____',
+        );
+      }
+    }
+  }
+
   async summarize(text: string): Promise<string> {
     this.validateApiKey();
 
@@ -274,173 +530,430 @@ export class AiService {
   }
 
   /**
-   * Generate question variations (easier, harder, different types, etc.)
+   * Generate question variations with separate transformation and format
+   * IMPORTANT: Generates ONE variation per AI request for maximum reliability
    */
   async generateQuestionVariations(
     originalQuestion: any,
-    variationTypes: string[],
+    variationRequests: Array<{ transformation: string; questionType: string }>,
     customInstructions?: string,
   ): Promise<any[]> {
     this.validateApiKey();
 
-    const systemPrompt = `You are an expert educational content creator specialized in creating COMPLETE QUESTIONS.
-
-ABSOLUTELY CRITICAL RULES:
-1. You MUST generate COMPLETE QUESTIONS, NOT answers
-2. Every 'text' field MUST contain a QUESTION that students will read and answer
-3. The 'text' field is the QUESTION STEM - it must end with a question mark (?) or be a complete interrogative statement
-4. DO NOT put answer options in the 'text' field - those go in the 'options' array
-5. DO NOT put the answer in the 'text' field - that goes in 'correctAnswer'
-
-CORRECT STRUCTURE:
-
-MCQ Question:
-{
-  "text": "Which of the following best describes the function of acrosomal enzymes?",  ← THE QUESTION
-  "options": ["A) They provide energy", "B) They digest the zona pellucida", "C) They attract the egg", "D) They prevent polyspermy"],  ← THE CHOICES
-  "correctAnswer": "B) They digest the zona pellucida",  ← THE ANSWER
-  "type": "mcq"
-}
-
-Short Answer Question:
-{
-  "text": "What is the primary function of acrosomal enzymes during fertilization?",  ← THE QUESTION
-  "correctAnswer": "They digest the zona pellucida to allow sperm penetration",  ← THE ANSWER
-  "type": "short_answer"
-}
-
-True/False Question:
-{
-  "text": "Acrosomal enzymes are released before the sperm reaches the egg.",  ← THE STATEMENT TO EVALUATE
-  "correctAnswer": "False",  ← THE ANSWER
-  "type": "true_false"
-}
-
-WRONG FORMAT (NEVER DO THIS):
-❌ { "text": "A) Energy B) Digestion C) Attraction D) Prevention" }  ← This is NOT a question!
-❌ { "text": "They digest the zona pellucida" }  ← This is an ANSWER, not a question!
-❌ { "text": "Answer: B" }  ← This is an ANSWER, not a question!
-
-Required JSON format:
-{
-  "variations": [
-    {
-      "variationType": "easier|harder|scenario_based|mcq|true_false|short_answer|essay|fill_blank",
-      "text": "THE COMPLETE QUESTION TEXT THAT STUDENTS WILL READ AND MUST ANSWER",
-      "type": "mcq|true_false|short_answer|essay|fill_blank",
-      "options": ["A) option1", "B) option2", "C) option3", "D) option4"] or null,
-      "correctAnswer": "The correct answer (for MCQ include letter)",
-      "difficulty": "easy|medium|hard",
-      "explanation": "Why this is the correct answer"
-    }
-  ]
-}`;
-
-    // Extract question details safely
-    const questionText = originalQuestion.questionText || originalQuestion.text || '';
-    const questionType = originalQuestion.questionType || originalQuestion.type || 'mcq';
-    const hasOptions = originalQuestion.options && Array.isArray(originalQuestion.options) && originalQuestion.options.length > 0;
-    
-    // Build clear prompt with examples
-    const userPrompt = `ORIGINAL QUESTION TO TRANSFORM:
-
-Question Text: "${questionText}"
-Question Type: ${questionType}
-${hasOptions ? `
-Options:
-${originalQuestion.options.map((opt: any, idx: number) => {
-  // Handle if options already have letters
-  const optText = typeof opt === 'string' ? opt : opt.text || opt;
-  const hasLetter = /^[A-D]\)/.test(optText);
-  return hasLetter ? optText : `${String.fromCharCode(65 + idx)}) ${optText}`;
-}).join('\n')}` : ''}
-${originalQuestion.correctAnswer ? `Correct Answer: ${originalQuestion.correctAnswer}` : ''}
-${originalQuestion.difficulty ? `Difficulty Level: ${originalQuestion.difficulty}` : ''}
-
-${customInstructions ? `SPECIAL INSTRUCTIONS: ${customInstructions}\n` : ''}
-
-YOUR TASK:
-Generate ${variationTypes.length} NEW QUESTION(S) - one for each variation type below:
-${variationTypes.map(t => `- ${t}`).join('\n')}
-
-MANDATORY REQUIREMENTS FOR EACH VARIATION:
-1. The 'text' field MUST be a COMPLETE QUESTION (interrogative sentence)
-2. If it's MCQ type, provide 4 distinct options in the 'options' array (do NOT include them in 'text')
-3. The 'correctAnswer' contains the answer (for MCQ: include the letter like "B) answer")
-4. Maintain the same SUBJECT MATTER as the original (unless variation type requires changing difficulty)
-5. Every question must be grammatically correct and educationally sound
-
-EXAMPLE TRANSFORMATION:
-Original: "Which enzyme digests the zona pellucida? A) Pepsin B) Acrosin C) Amylase D) Lipase"
-
-Easier Version (MCQ):
-{
-  "variationType": "easier",
-  "text": "What does the acrosome of a sperm cell help it do?",
-  "type": "mcq",
-  "options": ["A) Swim faster", "B) Break through the egg's outer layer", "C) Find the egg", "D) Produce energy"],
-  "correctAnswer": "B) Break through the egg's outer layer",
-  "difficulty": "easy"
-}
-
-Harder Version (MCQ):
-{
-  "variationType": "harder",
-  "text": "In the context of mammalian fertilization, which statement most accurately describes the role of acrosomal enzymes in successful sperm-egg fusion?",
-  "type": "mcq",
-  "options": ["A) They initiate the acrosome reaction upon contact with ZP3 glycoproteins", "B) They catalyze the hydrolysis of the zona pellucida matrix to facilitate sperm penetration", "C) They prevent premature capacitation before reaching the oocyte", "D) They mediate the cortical reaction in the secondary oocyte"],
-  "correctAnswer": "B) They catalyze the hydrolysis of the zona pellucida matrix to facilitate sperm penetration",
-  "difficulty": "hard"
-}
-
-Short Answer Version:
-{
-  "variationType": "short_answer",
-  "text": "Describe the function of acrosomal enzymes during the fertilization process.",
-  "type": "short_answer",
-  "correctAnswer": "Acrosomal enzymes digest the zona pellucida surrounding the egg, allowing the sperm to penetrate and reach the egg membrane for fertilization.",
-  "difficulty": "medium"
-}
-
-NOW GENERATE THE VARIATIONS. Return ONLY valid JSON with the 'variations' array.`;
-
-    try {
-      const aiResponse = await this.chat(userPrompt, systemPrompt);
-      const parsed = this.parseJsonResponse(aiResponse);
-      
-      // Validate that questions are actually questions
-      if (parsed.variations && Array.isArray(parsed.variations)) {
-        parsed.variations = parsed.variations.filter((v: any) => {
-          // Validation: text should not look like an answer
-          const textLower = (v.text || '').toLowerCase().trim();
-          
-          // Flag if it looks like an answer (starts with "answer:", just has letter+option format, etc.)
-          const looksLikeAnswer = 
-            textLower.startsWith('answer:') ||
-            textLower.startsWith('correct answer:') ||
-            /^[a-d]\)/.test(textLower) ||  // Starts with A), B), etc
-            (!textLower.includes('?') && !textLower.includes('which') && !textLower.includes('what') && 
-             !textLower.includes('how') && !textLower.includes('why') && !textLower.includes('describe') &&
-             !textLower.includes('explain') && textLower.split(' ').length < 8);  // Too short for a question
-          
-          if (looksLikeAnswer) {
-            this.logger.warn(`Filtered out invalid variation that looks like an answer: ${v.text}`);
-            return false;
-          }
-          
-          return true;
-        });
-      }
-      
-      this.logger.log(`Successfully generated ${parsed.variations?.length || 0} valid variations`);
-      return parsed.variations || [];
-    } catch (error) {
-      this.logger.error('Failed to generate variations:', error);
+    if (!originalQuestion) {
       throw new HttpException(
-        'Failed to generate question variations',
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        'Original question is required',
+        HttpStatus.BAD_REQUEST,
       );
     }
+
+    if (!variationRequests || variationRequests.length === 0) {
+      throw new HttpException(
+        'At least one variation is required',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const questionText =
+      originalQuestion.questionText ||
+      originalQuestion.text ||
+      '';
+
+    const originalType =
+      originalQuestion.questionType ||
+      originalQuestion.type ||
+      'short_answer';
+
+    const originalAnswer =
+      originalQuestion.correctAnswer ||
+      originalQuestion.answer ||
+      '';
+
+    const originalDifficulty =
+      originalQuestion.difficulty ||
+      'medium';
+
+    const originalOptions =
+      Array.isArray(originalQuestion.options)
+        ? originalQuestion.options
+        : [];
+
+    if (!questionText.trim()) {
+      throw new HttpException(
+        'Original question text is empty',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    this.logger.log(
+      `[QuestionVariation] Generating ${variationRequests.length} variations`,
+    );
+    
+    // Log what we're actually receiving
+    this.logger.log(
+      `[QuestionVariation] REQUESTS = ${JSON.stringify(
+        variationRequests,
+        null,
+        2,
+      )}`,
+    );
+
+    /*
+     * IMPORTANT:
+     * Generate EACH variation independently.
+     * Do not ask DeepSeek to generate several different formats
+     * in the same completion.
+     */
+    const results = await Promise.all(
+      variationRequests.map(async (request, index) => {
+        this.logger.log(
+          `[QuestionVariation ${index + 1}/${variationRequests.length}] ` +
+          `${request.transformation} + ${request.questionType}`,
+        );
+
+        const systemPrompt = `You are an expert educational assessment designer.
+
+Your ONLY task is to transform an existing educational question into ONE new question.
+
+You are NOT answering the original question.
+You are NOT explaining the original question.
+You are NOT summarizing the original question.
+
+You are creating a NEW QUESTION that a student must answer.
+
+==================================================
+🚨 CRITICAL - EXAMPLES OF WHAT NOT TO DO
+==================================================
+
+WRONG EXAMPLE 1 (putting answer in text field):
+{
+  "text": "Answer: True",
+  "correctAnswer": "True"
+}
+❌ THIS IS COMPLETELY WRONG!
+
+WRONG EXAMPLE 2 (putting answer in text field):
+{
+  "text": "Answer: صح",
+  "correctAnswer": "صح"
+}
+❌ THIS IS COMPLETELY WRONG!
+
+WRONG EXAMPLE 3 (just the answer word):
+{
+  "text": "صح",
+  "correctAnswer": "صح"
+}
+❌ THIS IS WRONG! "صح" is an ANSWER, not a question!
+
+CORRECT EXAMPLE:
+{
+  "text": "صح أم خطأ: المؤشرات اللغوية تساعد على فهم بنية النص الحجاجي.",
+  "options": ["صح", "خطأ"],
+  "correctAnswer": "صح"
+}
+✅ THIS IS CORRECT! The text contains a QUESTION.
+
+==================================================
+ABSOLUTE RULE
+==================================================
+
+The "text" field MUST contain the question shown to the student.
+
+The "correctAnswer" field MUST contain the hidden answer.
+
+NEVER put the answer inside "text".
+
+NEVER return an answer as "text".
+
+NEVER return an explanation as "text".
+
+NEVER put just "صح" or "خطأ" or "True" or "False" in the "text" field.
+
+==================================================
+REQUIRED QUESTION TYPE
+==================================================
+
+The required question type is:
+
+${request.questionType}
+
+You MUST use this exact type.
+
+Do NOT change it.
+
+Do NOT infer another type.
+
+Do NOT substitute another format.
+
+==================================================
+TRANSFORMATION
+==================================================
+
+The requested transformation is:
+
+${request.transformation}
+
+Apply ONLY this transformation while preserving the academic concept and learning objective.
+
+==================================================
+QUESTION TYPE DEFINITIONS
+==================================================
+
+MCQ:
+- text must be a complete question.
+- exactly 4 options.
+- exactly ONE option is correct.
+- correctAnswer must identify the correct option.
+- options must contain the answer choices.
+
+TRUE_FALSE:
+- text must contain a FULL QUESTION starting with
+  "Vrai ou faux :" or "True or False:" or "صح أم خطأ:"
+- The text must present a STATEMENT that the student evaluates
+- NEVER put just "صح" or "True" or "Vrai" in the text field
+- correctAnswer must be one of the valid answer values
+- Example CORRECT:
+  {
+    "text": "صح أم خطأ: المؤشرات اللغوية تساعد على فهم بنية النص.",
+    "options": ["صح", "خطأ"],
+    "correctAnswer": "صح"
+  }
+
+SHORT_ANSWER:
+- text must explicitly ask the student a question.
+- correctAnswer contains the expected response.
+
+ESSAY:
+- text must ask for analysis, discussion,
+  comparison, evaluation, or detailed explanation.
+- correctAnswer contains the expected answer.
+
+FILL_BLANK:
+- text must contain _____.
+- correctAnswer contains the missing information.
+
+==================================================
+LANGUAGE
+==================================================
+
+Use EXACTLY the same language as the original question.
+
+Do NOT translate it.
+
+==================================================
+QUALITY
+==================================================
+
+The generated question must:
+
+1. Be genuinely different from the original wording.
+2. Test the same academic concept.
+3. Preserve important facts, formulas, entities,
+   terminology and relationships.
+4. Be appropriate for the requested transformation.
+5. Be appropriate for the original academic level.
+
+==================================================
+OUTPUT
+==================================================
+
+Return ONLY this JSON object:
+
+{
+  "variationType": "${request.transformation}",
+  "type": "${request.questionType}",
+  "text": "THE FULL QUESTION HERE - NEVER put 'Answer:' here",
+  "options": null,
+  "correctAnswer": "THE ANSWER HERE",
+  "difficulty": "easy|medium|hard"
+}
+
+No markdown. No explanation. No additional text.
+
+🚨 REMINDER: The "text" field must be a QUESTION, not an answer!`;
+
+        const userPrompt = `ORIGINAL QUESTION
+=================
+
+Question: ${questionText}
+
+Original type: ${originalType}
+
+Original difficulty: ${originalDifficulty}
+
+Original correct answer: ${originalAnswer || 'Not provided'}
+
+${
+  originalOptions.length > 0
+    ? `
+Original options:
+${originalOptions
+  .map((option: any) =>
+    typeof option === 'string'
+      ? option
+      : option.text || JSON.stringify(option),
+  )
+  .join('\n')}
+`
+    : ''
+}
+
+==================================================
+
+REQUESTED TRANSFORMATION: ${request.transformation}
+
+REQUESTED QUESTION TYPE: ${request.questionType}
+
+${
+  customInstructions
+    ? `
+ADDITIONAL TEACHER INSTRUCTION:
+${customInstructions}
+`
+    : ''
+}
+
+==================================================
+
+Generate ONE question only.
+
+Remember:
+
+🚨 CRITICAL RULES:
+1. The "text" field = THE QUESTION (what student READS on exam)
+2. The "correctAnswer" field = THE ANSWER (what student WRITES as response)
+3. NEVER put "Answer:" in the text field
+4. NEVER put just "صح" or "True" in the text field
+5. For True/False: Start text with "صح أم خطأ:" or "True or False:"
+
+WRONG:
+{
+  "text": "Answer: صح"  ← WRONG! This is an answer, not a question
+}
+
+CORRECT:
+{
+  "text": "صح أم خطأ: المؤشرات اللغوية تساعد على فهم النص."  ← CORRECT! This is a question
+}
+
+Return JSON only.`;
+
+        try {
+          this.logger.log(
+            `[QuestionVariation ${index + 1}] Calling structuredGeneration...`,
+          );
+
+          const response = await this.structuredGeneration(
+            userPrompt,
+            systemPrompt,
+          );
+
+          this.logger.log(
+            `[QuestionVariation ${index + 1}] Raw AI response: ${response.substring(0, 300)}`,
+          );
+
+          // Pre-check: If response contains "Answer:" it's wrong, reject immediately
+          if (/^[\s\{]*["\']?text["\']?\s*:\s*["\']Answer:/i.test(response)) {
+            throw new Error(
+              'AI generated "Answer:" in text field - regenerating...',
+            );
+          }
+
+          this.logger.log(
+            `[QuestionVariation ${index + 1}] Parsing JSON...`,
+          );
+
+          const parsed = this.parseJsonResponse(response);
+
+          this.logger.log(
+            `[QuestionVariation ${index + 1}] Parsed JSON: ${JSON.stringify(parsed).substring(0, 200)}`,
+          );
+
+          const variation = parsed?.variations
+            ? parsed.variations[0]
+            : parsed;
+
+          if (!variation) {
+            throw new Error(
+              'AI returned no variation',
+            );
+          }
+
+          /*
+           * IMPORTANT:
+           * The backend controls these values.
+           * Do not trust the AI to tell us what it generated.
+           */
+          variation.variationType =
+            request.transformation;
+
+          variation.type =
+            request.questionType;
+
+          variation.text =
+            String(variation.text || '').trim();
+
+          variation.correctAnswer =
+            variation.correctAnswer
+              ? String(variation.correctAnswer).trim()
+              : null;
+
+          /*
+           * Validate the result
+           */
+          this.logger.log(
+            `[QuestionVariation ${index + 1}] Validating variation...`,
+          );
+
+          this.validateGeneratedVariation(
+            variation,
+            request,
+          );
+
+          // Normalize True/False answers to standard format
+          if (request.questionType === 'true_false' && variation.correctAnswer) {
+            const answer = variation.correctAnswer.toLowerCase().trim();
+            // Normalize to standard Arabic or English/French
+            if (['صح', 'صحيح', 'صواب'].includes(answer)) {
+              variation.correctAnswer = 'صح';
+            } else if (['خطأ', 'خاطئ', 'خطا'].includes(answer)) {
+              variation.correctAnswer = 'خطأ';
+            } else if (['true', 't', 'vrai'].includes(answer)) {
+              variation.correctAnswer = answer === 'vrai' ? 'Vrai' : 'True';
+            } else if (['false', 'f', 'faux'].includes(answer)) {
+              variation.correctAnswer = answer === 'faux' ? 'Faux' : 'False';
+            }
+          }
+
+          this.logger.log(
+            `[QuestionVariation ${index + 1}] SUCCESS: Generated ${variation.type}`,
+          );
+
+          return variation;
+        } catch (error) {
+          this.logger.error(
+            `[QuestionVariation ${index + 1}] FAILED:`,
+            error.message || error,
+          );
+          this.logger.error(
+            `[QuestionVariation ${index + 1}] Stack:`,
+            error.stack,
+          );
+
+          throw new HttpException(
+            `Failed to generate variation ${index + 1} (${request.transformation} + ${request.questionType}): ${error.message || 'Unknown error'}`,
+            HttpStatus.INTERNAL_SERVER_ERROR,
+          );
+        }
+      }),
+    );
+
+    this.logger.log(
+      `[QuestionVariation] Successfully generated ${results.length} variations`,
+    );
+
+    return results;
   }
 
   /**
@@ -839,6 +1352,13 @@ Example: If document discusses "regulation hormonale de la reproduction avec GnR
         questions = this.filterByQuestionTypes(questions, dto.questionTypes);
       }
 
+      // Step 2.5: Remove duplicate questions based on text similarity
+      const originalCount = questions.length;
+      questions = this.removeDuplicateQuestions(questions);
+      if (originalCount > questions.length) {
+        this.logger.log(`[generateCompleteExam] Removed ${originalCount - questions.length} duplicate questions`);
+      }
+
       // Step 3: Limit to requested number
       questions = questions.slice(0, dto.numQuestions || dto.totalQuestions || 20);
 
@@ -960,7 +1480,7 @@ Example: If document discusses "regulation hormonale de la reproduction avec GnR
         const questions = await this.questionRepository.find({
           where: {
             id: In(config.questionIds),
-            isDeleted: false,
+            deletedAt: IsNull(),
           },
         });
         
@@ -968,10 +1488,10 @@ Example: If document discusses "regulation hormonale de la reproduction avec GnR
         return questions;
       }
       
-      // Otherwise fetch all user's questions (limit to 100)
+      // Otherwise fetch all questions (limit to 100)
       const questions = await this.questionRepository.find({
         where: {
-          isDeleted: false,
+          deletedAt: IsNull(),
         },
         take: 100,
         order: { createdAt: 'DESC' },
@@ -995,7 +1515,7 @@ Example: If document discusses "regulation hormonale de la reproduction avec GnR
         const questions = await this.questionRepository.find({
           where: {
             id: In(config.questionIds),
-            isDeleted: false,
+            deletedAt: IsNull(),
           },
         });
         
@@ -1006,7 +1526,7 @@ Example: If document discusses "regulation hormonale de la reproduction avec GnR
       // Otherwise fetch all available questions
       const questions = await this.questionRepository.find({
         where: {
-          isDeleted: false,
+          deletedAt: IsNull(),
         },
         take: 100,
         order: { createdAt: 'DESC' },
@@ -1063,6 +1583,46 @@ Example: If document discusses "regulation hormonale de la reproduction avec GnR
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     return shuffled;
+  }
+
+  /**
+   * Helper: Remove duplicate questions based on text similarity
+   */
+  private removeDuplicateQuestions(questions: any[]): any[] {
+    const seen = new Map<string, any>();
+    
+    for (const question of questions) {
+      // Get question text (handle both questionText and text properties)
+      const questionText = question.questionText || question.text || '';
+      
+      // Normalize question text for comparison (lowercase, remove extra spaces, remove punctuation)
+      const normalizedText = questionText
+        .toLowerCase()
+        .replace(/[^\w\s]/g, '') // Remove punctuation
+        .replace(/\s+/g, ' ')     // Normalize spaces
+        .trim();
+      
+      // If we haven't seen this question text before, keep it
+      if (!seen.has(normalizedText)) {
+        seen.set(normalizedText, question);
+      } else {
+        // If duplicate found, keep the one with more complete data
+        const existing = seen.get(normalizedText)!;
+        const hasMoreData = 
+          (question.options && question.options.length > (existing.options?.length || 0)) ||
+          (question.correctAnswer && !existing.correctAnswer) ||
+          (question.explanation && !existing.explanation);
+        
+        if (hasMoreData) {
+          this.logger.log(`[Deduplication] Replacing duplicate with more complete version: ${question.id}`);
+          seen.set(normalizedText, question);
+        } else {
+          this.logger.log(`[Deduplication] Skipping duplicate question: ${question.id}`);
+        }
+      }
+    }
+    
+    return Array.from(seen.values());
   }
 
   /**

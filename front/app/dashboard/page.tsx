@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, FileText, Sparkles, Star, Upload, Library, Check, AlertCircle, Clock } from "lucide-react";
+import { BookOpen, FileText, Sparkles, Star, Upload, Library, Check, AlertCircle, Clock, ShoppingBag, Heart, TrendingUp, Award } from "lucide-react";
 import { authService, User } from "@/lib/auth";
 import { useResources } from "@/lib/resources-context";
 import Link from "next/link";
+import StudentHome from "@/components/student/StudentHome";
 
 /* ── Icon mapping ── */
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -26,6 +27,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const currentUser = authService.getUser();
+    console.log('Dashboard - Current user:', currentUser);
     setUser(currentUser);
     
     // Redirect admins to overview page
@@ -34,7 +36,15 @@ export default function DashboardPage() {
     }
   }, [router]);
 
-  // Calculate real stats from user's resources
+  // Show student dashboard if user is a student
+  if (user?.role === "student") {
+    console.log('Rendering StudentHome for student');
+    return <StudentHome user={user} />;
+  }
+
+  console.log('Rendering teacher dashboard');
+
+  // Calculate real stats from user's resources (for teachers)
   const stats = {
     totalCourses: resources.length,
     totalViews: resources.reduce((sum, r) => sum + r.views, 0),
@@ -232,6 +242,192 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+
+/* ── Student Dashboard Component ── */
+function StudentDashboard({ user }: { user: User }) {
+  console.log('StudentDashboard rendering for user:', user.fullName);
+  
+  return (
+    <div className="space-y-7">
+      {/* Page header with gradient */}
+      <div className="relative p-8 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full -mr-32 -mt-32"></div>
+        <div className="absolute bottom-0 left-0 w-48 h-48 bg-white opacity-10 rounded-full -ml-24 -mb-24"></div>
+        
+        <div className="relative z-10">
+          <h1 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-3xl font-bold mb-2">
+            Welcome back, {user?.fullName || "Student"}! 
+          </h1>
+          <p className="text-blue-100">
+            Ready to explore and learn? Your library is growing!
+          </p>
+        </div>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-lg transition-all transform hover:-translate-y-1">
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl flex items-center justify-center">
+              <BookOpen className="w-6 h-6 text-blue-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-[#0d1b3e]">0</p>
+          <p className="text-xs text-[#8899bb] mt-1">My Library</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-lg transition-all transform hover:-translate-y-1">
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-purple-200 rounded-xl flex items-center justify-center">
+              <Heart className="w-6 h-6 text-purple-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-[#0d1b3e]">0</p>
+          <p className="text-xs text-[#8899bb] mt-1">Bookmarks</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-lg transition-all transform hover:-translate-y-1">
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-green-100 to-green-200 rounded-xl flex items-center justify-center">
+              <TrendingUp className="w-6 h-6 text-green-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-[#0d1b3e]">Active</p>
+          <p className="text-xs text-[#8899bb] mt-1">Learning Status</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#edf0f7] p-5 hover:shadow-lg transition-all transform hover:-translate-y-1">
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-100 to-orange-200 rounded-xl flex items-center justify-center">
+              <Award className="w-6 h-6 text-orange-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-[#0d1b3e]">Learner</p>
+          <p className="text-xs text-[#8899bb] mt-1">Achievement Level</p>
+        </div>
+      </div>
+
+      {/* Quick actions */}
+      <div>
+        <h2 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-lg font-semibold text-[#0d1b3e] mb-4">
+          Quick Actions
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Link
+            href="/dashboard/library"
+            className="group flex items-center gap-4 bg-white rounded-xl border border-[#edf0f7] p-5 hover:border-blue-400 hover:shadow-lg transition-all transform hover:-translate-y-1"
+          >
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <ShoppingBag className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-[#0d1b3e] group-hover:text-blue-600 transition-colors">
+                Browse Marketplace
+              </p>
+              <p className="text-xs text-[#8899bb]">Discover new resources</p>
+            </div>
+          </Link>
+
+          <Link
+            href="/dashboard/resources"
+            className="group flex items-center gap-4 bg-white rounded-xl border border-[#edf0f7] p-5 hover:border-purple-400 hover:shadow-lg transition-all transform hover:-translate-y-1"
+          >
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-100 to-purple-200 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Library className="w-6 h-6 text-purple-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-[#0d1b3e] group-hover:text-purple-600 transition-colors">
+                My Library
+              </p>
+              <p className="text-xs text-[#8899bb]">Access your resources</p>
+            </div>
+          </Link>
+
+          <Link
+            href="/dashboard/cart"
+            className="group flex items-center gap-4 bg-white rounded-xl border border-[#edf0f7] p-5 hover:border-green-400 hover:shadow-lg transition-all transform hover:-translate-y-1"
+          >
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-100 to-green-200 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <ShoppingBag className="w-6 h-6 text-green-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-[#0d1b3e] group-hover:text-green-600 transition-colors">
+                View Cart
+              </p>
+              <p className="text-xs text-[#8899bb]">Complete your purchase</p>
+            </div>
+          </Link>
+        </div>
+      </div>
+
+      {/* Featured content */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Welcome card */}
+        <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl p-6 border border-blue-100">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-white/80 flex items-center justify-center text-blue-600">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <div className="flex-1">
+              <h3 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-lg font-semibold mb-2 text-[#0d1b3e]">
+                Start Your Learning Journey
+              </h3>
+              <p className="text-sm text-[#5a7299] leading-relaxed mb-4">
+                Explore our marketplace filled with high-quality educational resources from verified educators. Build your perfect study collection!
+              </p>
+              <Link
+                href="/dashboard/library"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium hover:shadow-lg transition-all"
+              >
+                Explore Now
+                <Sparkles className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* Benefits card */}
+        <div className="bg-white rounded-2xl border border-[#edf0f7] p-6">
+          <h3 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-lg font-semibold mb-4 text-[#0d1b3e]">
+            Why Learn With Us?
+          </h3>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
+                <Check className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#0d1b3e]">Verified Content</p>
+                <p className="text-xs text-[#8899bb]">All resources reviewed by educators</p>
+              </div>
+            </div>
+            
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                <BookOpen className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#0d1b3e]">Diverse Library</p>
+                <p className="text-xs text-[#8899bb]">Thousands of resources across all subjects</p>
+              </div>
+            </div>
+            
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
+                <Star className="w-5 h-5 text-purple-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#0d1b3e]">Top Quality</p>
+                <p className="text-xs text-[#8899bb]">Highly-rated materials from expert teachers</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

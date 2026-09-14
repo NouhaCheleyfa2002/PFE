@@ -102,13 +102,13 @@ export class NotificationsGateway
         });
       } catch (jwtError) {
         this.logger.error(`JWT verification failed: ${jwtError.message}`);
-        client.emit('connect_error', { message: 'Invalid or expired token' });
+        client.emit('auth_error', { message: 'Invalid or expired token' });
         client.disconnect();
         return;
       }
     } catch (error) {
       this.logger.error(`Connection error: ${error.message}`, error.stack);
-      client.emit('connect_error', { message: 'Connection failed' });
+      client.emit('connection_failed', { message: 'Connection failed' });
       client.disconnect();
     }
   }
@@ -981,7 +981,7 @@ export class NotificationsGateway
       session.lastActivity = new Date();
     }
 
-    // Broadcast to other collaborators
+    // Broadcast to other collaborators only (not the sender)
     client.to(`exam:${data.examId}`).emit('exam:element_editing', {
       userId,
       userName,
@@ -1015,7 +1015,7 @@ export class NotificationsGateway
       session.lastActivity = new Date();
     }
 
-    // Broadcast to other collaborators that editing stopped
+    // Broadcast to other collaborators only (not the sender)
     client.to(`exam:${data.examId}`).emit('exam:element_editing', {
       userId,
       userName,

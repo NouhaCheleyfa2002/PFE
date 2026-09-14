@@ -29,9 +29,10 @@ interface ResourceDetailModalProps {
   resource: Resource;
   isOpen: boolean;
   onClose: () => void;
+  onDataChanged?: () => void; // Callback to refresh parent data
 }
 
-export function ResourceDetailModal({ resource, isOpen, onClose }: ResourceDetailModalProps) {
+export function ResourceDetailModal({ resource, isOpen, onClose, onDataChanged }: ResourceDetailModalProps) {
   const [activeTab, setActiveTab] = useState<"overview" | "reviews">("overview");
   const [showPreview, setShowPreview] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
@@ -255,6 +256,11 @@ export function ResourceDetailModal({ resource, isOpen, onClose }: ResourceDetai
       if (res.ok) {
         await fetchRatingData();
         setShowRatingModal(false);
+        
+        // Notify parent to refresh its data
+        if (onDataChanged) {
+          onDataChanged();
+        }
       } else {
         let errorMessage = "Failed to submit rating. Please try again.";
         try {
@@ -306,6 +312,11 @@ export function ResourceDetailModal({ resource, isOpen, onClose }: ResourceDetai
       });
 
       await fetchRatingData();
+      
+      // Notify parent to refresh its data
+      if (onDataChanged) {
+        onDataChanged();
+      }
     } catch (error) {
       console.error("Failed to delete review:", error);
     }
@@ -438,7 +449,7 @@ export function ResourceDetailModal({ resource, isOpen, onClose }: ResourceDetai
                       </div>
                     ) : (
                       <div>
-                        {canRate || hasDownloaded ? (
+                        {canRate ? (
                           <button
                             onClick={() => setShowRatingModal(true)}
                             className="w-full px-4 py-2 rounded-lg bg-[#63b3ed] text-white text-sm font-medium hover:bg-[#4299e1] transition-colors"
@@ -448,14 +459,16 @@ export function ResourceDetailModal({ resource, isOpen, onClose }: ResourceDetai
                         ) : (
                           <div className="text-center">
                             <p className="text-xs text-[#8899bb] mb-3">
-                              Download this resource to rate it
+                              {hasDownloaded ? "You own this resource" : "Download this resource to rate it"}
                             </p>
-                            <button
-                              onClick={handleDownload}
-                              className="w-full px-4 py-2 rounded-lg bg-[#63b3ed] text-white text-sm font-medium hover:bg-[#4299e1] transition-colors"
-                            >
-                              Download Now
-                            </button>
+                            {!hasDownloaded && (
+                              <button
+                                onClick={handleDownload}
+                                className="w-full px-4 py-2 rounded-lg bg-[#63b3ed] text-white text-sm font-medium hover:bg-[#4299e1] transition-colors"
+                              >
+                                Download Now
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>

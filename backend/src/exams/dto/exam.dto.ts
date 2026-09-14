@@ -1,4 +1,4 @@
-import { IsString, IsArray, IsOptional, IsNumber } from 'class-validator';
+import { IsString, IsArray, IsOptional, IsNumber, IsIn, Min } from 'class-validator';
 
 export class CreateExamDto {
   @IsString()
@@ -30,6 +30,10 @@ export class CreateExamDto {
   @IsOptional()
   @IsNumber()
   maxPoints?: number;
+
+  @IsOptional()
+  @IsString()
+  sourceType?: string; // 'manual' or 'ai_generated'
 }
 
 export class UpdateExamDto {
@@ -68,4 +72,39 @@ export class UpdateExamDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceType?: string; // 'manual' or 'ai_generated'
+}
+
+export class PublishExamDto {
+  @IsString()
+  title: string;
+
+  @IsString()
+  classLevel: string;
+
+  @IsString()
+  subject: string;
+
+  @IsOptional()
+  @IsString()
+  bacSection?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsArray()
+  keywords?: string[];
+
+  @IsIn(['free', 'paid'])
+  license: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
 }

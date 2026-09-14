@@ -8,6 +8,7 @@ import { User } from './interfaces/user.interface';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import { UserEntity } from './entities/user.entity';
 import { UserNotificationsService } from '../user-notifications/user-notifications.service';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -19,6 +20,7 @@ export class AuthService implements OnModuleInit {
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
     private readonly userNotificationsService: UserNotificationsService,
+    private readonly mailService: MailService,
   ) {}
 
   async onModuleInit() {
@@ -123,6 +125,14 @@ export class AuthService implements OnModuleInit {
       this.logger.warn(`Failed to send account creation notification: ${error.message}`);
     }
 
+    // Send welcome email
+    try {
+      await this.mailService.sendWelcomeEmail(savedUser.email, savedUser.fullName);
+      this.logger.log(`Welcome email sent to: ${savedUser.email}`);
+    } catch (error) {
+      this.logger.warn(`Failed to send welcome email: ${error.message}`);
+    }
+
     // Notify admins about new user registration
     try {
       this.logger.log(`Attempting to notify admins about new user: ${savedUser.fullName} (${savedUser.id})`);
@@ -221,6 +231,14 @@ export class AuthService implements OnModuleInit {
     } catch (error) {
       this.logger.warn(`Failed to send password change notification: ${error.message}`);
     }
+
+    // Send password changed email
+    try {
+      await this.mailService.sendPasswordChanged(user.email, user.fullName);
+      this.logger.log(`Password changed email sent to: ${user.email}`);
+    } catch (error) {
+      this.logger.warn(`Failed to send password changed email: ${error.message}`);
+    }
   }
 
   async searchVerifiedTeachers(query: string): Promise<Omit<User, 'password'>[]> {
@@ -249,5 +267,97 @@ export class AuthService implements OnModuleInit {
       .getMany();
 
     return users.map(({ password, ...u }) => u as any);
+  }
+
+  /**
+   * Google OAuth Login/Register
+   * Creates new user if doesn't exist, or logs in existing user
+   */
+  async googleLogin(googleUser: {
+    googleId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    picture?: string;
+  }): Promise<{ user: Omit<User, 'password'>; access_token: string; isNewUser: boolean }> {
+    const email = googleUser.email.toLowerCase();
+    
+    // Check if user already exists
+    let user = await this.userRepository.findOne({ where: { email } });
+    let isNewUser = false;
+
+    if (!user) {
+      // Create new user from Google profile
+      const fullName = `${googleUser.firstName} ${googleUser.lastName}`.trim();
+      
+      user = this.userRepository.create({
+        email,
+        fullName: fullName || email.split('@')[0],
+        googleId: googleUser.googleId,
+        profilePicture: googleUser.picture,
+        role: 'student', // Default role for Google users
+        verified: true, // Google users are auto-verified (email is verified by Google)
+        verificationStatus: 'verified',
+        password: '', // No password for OAuth users
+      });
+
+      user = await this.userRepository.save(user);
+      isNewUser = true;
+
+      this.logger.log(`New user created via Google OAuth: ${email}`);
+
+      // Send welcome notification
+      try {
+        await this.userNotificationsService.notifyAccountCreated(
+          user.id,
+          user.fullName
+        );
+      } catch (error) {
+        this.logger.warn(`Failed to send account creation notification: ${error.message}`);
+      }
+
+      // Send welcome email
+      try {
+        await this.mailService.sendWelcomeEmail(user.email, user.fullName);
+        this.logger.log(`Welcome email sent to: ${user.email}`);
+      } catch (error) {
+        this.logger.warn(`Failed to send welcome email: ${error.message}`);
+      }
+
+      // Notify admins
+      try {
+        await this.userNotificationsService.notifyNewUserRegistration(
+          user.fullName,
+          user.role,
+          user.id
+        );
+      } catch (error) {
+        this.logger.error(`Failed to send admin registration notification: ${error.message}`);
+      }
+    } else {
+      // Update Google ID if not set
+      if (!user.googleId) {
+        user.googleId = googleUser.googleId;
+        await this.userRepository.save(user);
+        this.logger.log(`Google ID linked to existing user: ${email}`);
+      }
+    }
+
+    // Generate JWT
+    const payload = { 
+      sub: user.id, 
+      email: user.email, 
+      role: user.role,
+      fullName: user.fullName,
+    };
+    const access_token = this.jwtService.sign(payload);
+
+    // Return user without password
+    const { password, ...userWithoutPassword } = user;
+    return { 
+      user: userWithoutPassword as any, 
+      access_token,
+      isNewUser,
+    };
   }
 }

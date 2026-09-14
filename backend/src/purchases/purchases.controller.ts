@@ -19,6 +19,14 @@ export class PurchasesController {
     );
   }
 
+  @Post('checkout')
+  async checkout(
+    @Request() req,
+    @Body() body: { purchases: Array<{ documentId: string; quantity: number; price: number }> },
+  ) {
+    return this.purchasesService.processCheckout(req.user.sub, body.purchases);
+  }
+
   @Get('check/:documentId')
   async checkPurchase(@Request() req, @Param('documentId') documentId: string) {
     const hasPurchased = await this.purchasesService.hasPurchased(req.user.sub, documentId);

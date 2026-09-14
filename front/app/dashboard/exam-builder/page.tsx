@@ -14,6 +14,10 @@ import {
   X,
   Users,
   Sparkles,
+  Brain,
+  BarChart3,
+  Info,
+  Check,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ExamProvider, useExam, PreviewMode } from "@/lib/exam-context";
@@ -27,6 +31,7 @@ import CollaborationToast from "@/components/collaboration/CollaborationToast";
 import WebSocketDebugPanel from "@/components/collaboration/WebSocketDebugPanel";
 import { useWebSocket } from "@/lib/websocket-context";
 import AIExamGeneratorWizard from "@/components/ai/AIExamGeneratorWizard";
+import { PublishExamModal } from "@/components/exam-builder/PublishExamModal";
 
 /* ─── Save indicator ───────────────────────────────────────────────────────── */
 
@@ -55,35 +60,6 @@ function SaveIndicator() {
   return null;
 }
 
-/* ─── Preview mode toggle ──────────────────────────────────────────────────── */
-
-const MODES: { id: PreviewMode; label: string; icon: ReactNode }[] = [
-  { id: "edit", label: "Edit", icon: <Pencil className="w-3.5 h-3.5" /> },
-  { id: "student", label: "Student view", icon: <Eye className="w-3.5 h-3.5" /> },
-];
-
-function PreviewModeToggle() {
-  const { previewMode, setPreviewMode } = useExam();
-
-  return (
-    <div className="flex items-center rounded-lg border border-[#edf0f7] overflow-hidden bg-[#f9faff] p-0.5 gap-0.5">
-      {MODES.map((m) => (
-        <button
-          key={m.id}
-          onClick={() => setPreviewMode(m.id)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-            previewMode === m.id
-              ? "bg-white text-[#0d1b3e] shadow-sm"
-              : "text-[#8899bb] hover:text-[#0d1b3e]"
-          }`}
-        >
-          {m.icon}
-          {m.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /* ─── Validation summary ───────────────────────────────────────────────────── */
 
@@ -113,6 +89,7 @@ function ExamBuilderInner() {
     totalPoints, 
     pointsRemaining, 
     previewMode, 
+    setPreviewMode,
     setClassLevel, 
     setTemplateId, 
     setMaxPoints, 
@@ -139,11 +116,17 @@ function ExamBuilderInner() {
   const [availableExams, setAvailableExams] = useState<any[]>([]);
   const [loadingExams, setLoadingExams] = useState(false);
   const [currentExamId, setCurrentExamId] = useState<string>("");
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [aiGeneratedExams, setAIGeneratedExams] = useState<any[]>([]);
+  const [loadingAIExams, setLoadingAIExams] = useState(false);
+  const [viewMode, setViewMode] = useState<"builder" | "ai-generated">("builder");
+  const [isExamPublished, setIsExamPublished] = useState(false);
 
   // Get user info for collaboration
   const [userId, setUserId] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
   const [isOwner, setIsOwner] = useState<boolean>(false);
+  const [examOwnerId, setExamOwnerId] = useState<string>("");
 
   useEffect(() => {
     // Get user info from localStorage or API
@@ -175,6 +158,7 @@ function ExamBuilderInner() {
     
     // Load available exams
     loadAvailableExams();
+    loadAIGeneratedExams();
 
     // Check URL for examId parameter
     const urlParams = new URLSearchParams(window.location.search);
@@ -248,7 +232,8 @@ function ExamBuilderInner() {
           setAvailableExams([]);
         }
       } else {
-        console.error('Failed to load exams:', response.status);
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error('Failed to load exams:', response.status, errorText);
         setAvailableExams([]);
       }
     } catch (error) {
@@ -256,6 +241,50 @@ function ExamBuilderInner() {
       setAvailableExams([]);
     } finally {
       setLoadingExams(false);
+    }
+  };
+
+  const loadAIGeneratedExams = async () => {
+    setLoadingAIExams(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('http://localhost:3000/exams/ai-generated/list', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('AI-Generated Exams API response:', data);
+        
+        // Handle both array and paginated responses
+        let exams;
+        if (Array.isArray(data)) {
+          exams = data;
+        } else if (data.exams && Array.isArray(data.exams)) {
+          exams = data.exams;
+        } else {
+          console.warn('Unexpected AI exams response format:', data);
+          setAIGeneratedExams([]);
+          return;
+        }
+        
+        if (Array.isArray(exams)) {
+          console.log(`Loaded ${exams.length} AI-generated exams`);
+          setAIGeneratedExams(exams);
+        } else {
+          console.warn('AI Exams is not an array:', exams);
+          setAIGeneratedExams([]);
+        }
+      } else {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error('Failed to load AI-generated exams:', response.status, errorText);
+        setAIGeneratedExams([]);
+      }
+    } catch (error) {
+      console.error('Failed to load AI-generated exams:', error);
+      setAIGeneratedExams([]);
+    } finally {
+      setLoadingAIExams(false);
     }
   };
 
@@ -280,6 +309,26 @@ function ExamBuilderInner() {
         
         // Set current exam ID for collaboration
         setCurrentExamId(examData.id);
+        
+        // Check if exam is published
+        setIsExamPublished(examData.isPublished || examData.status === 'published');
+        
+        // Set exam owner ID and check if current user is owner
+        const examOwner = examData.ownerId;
+        setExamOwnerId(examOwner);
+        
+        // Get current user ID from token
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            const currentUserId = payload.sub || payload.userId || "";
+            setIsOwner(currentUserId === examOwner);
+            console.log('[ExamBuilder] Owner check:', { currentUserId, examOwner, isOwner: currentUserId === examOwner });
+          } catch (err) {
+            console.error('[ExamBuilder] Failed to parse token for owner check:', err);
+          }
+        }
         
         // Update URL with exam ID
         window.history.pushState({}, '', `/dashboard/exam-builder?examId=${examData.id}`);
@@ -430,6 +479,7 @@ function ExamBuilderInner() {
           questions: exam.questions,
           templateId: exam.templateId,
           maxPoints: exam.maxPoints,
+          sourceType: 'manual', // Mark as manually created
         }),
       });
 
@@ -440,6 +490,10 @@ function ExamBuilderInner() {
         
         // Update URL with exam ID
         window.history.pushState({}, '', `/dashboard/exam-builder?examId=${savedExam.id}`);
+        
+        // Refresh exams list (both regular and AI-generated)
+        loadAvailableExams();
+        loadAIGeneratedExams();
         
         toast.success(
           isValidUUID ? 'Exam updated successfully!' : 'Exam created successfully!',
@@ -657,13 +711,52 @@ function ExamBuilderInner() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* Publish Exam Modal */}
+      <PublishExamModal
+        isOpen={showPublishModal}
+        onClose={() => setShowPublishModal(false)}
+        examId={currentExamId || exam.id || ''}
+        examTitle={exam.title || 'Untitled Exam'}
+        questionCount={exam.questions.length}
+        previewRef={previewRef}
+        previewMode={previewMode}
+        setPreviewMode={setPreviewMode}
+        onPublished={() => {
+          setIsExamPublished(true); // Update published status
+          toast.success('Exam published! Waiting for admin approval.');
+          loadAIGeneratedExams(); // Refresh the AI-generated exams list
+        }}
+      />
+
       {/* AI Exam Generator Wizard */}
       <AIExamGeneratorWizard
         isOpen={showAIWizard}
         onClose={() => setShowAIWizard(false)}
         onExamGenerated={(generatedExam) => {
-          // TODO: Populate exam with generated content
-          toast.success('Exam generated successfully!');
+          // Populate exam with generated content
+          setTitle(generatedExam.title || 'AI Generated Exam');
+          setInstructions(generatedExam.instructions || '');
+          setDuration(generatedExam.duration || 60);
+          
+          // Clear existing questions and add generated ones
+          clearExam();
+          
+          generatedExam.questions.forEach((q: any) => {
+            addQuestion({
+              id: q.id || `q-${Date.now()}-${Math.random()}`,
+              text: q.text,
+              type: q.type,
+              category: q.category || 'General',
+              options: q.options || [],
+              correctAnswer: q.correctAnswer || '',
+              points: q.points || 1,
+              difficulty: q.difficulty || 5,
+              topic: q.topic,
+              explanation: q.explanation,
+            });
+          });
+          
+          toast.success(`Exam generated with ${generatedExam.questions.length} questions! Remember to save.`);
           setShowAIWizard(false);
         }}
       />
@@ -698,8 +791,8 @@ function ExamBuilderInner() {
               <CollaboratorManager
                 resourceType="exam"
                 resourceId={exam.id}
-                currentUserId={userId}
                 isOwner={isOwner}
+                ownerId={examOwnerId}
               />
             </div>
           </div>
@@ -803,7 +896,7 @@ function ExamBuilderInner() {
                 value={currentExamId || exam.id || ''}
                 onChange={(e) => {
                   const selectedId = e.target.value;
-                  if (selectedId === 'new') {
+                  if (selectedId === '' || selectedId === 'new') {
                     clearExam();
                     setCurrentExamId('');
                     // Update URL to remove examId
@@ -816,7 +909,7 @@ function ExamBuilderInner() {
                 }}
                 className="px-4 py-2 rounded-lg border-2 border-[#63b3ed] text-sm font-medium outline-none focus:border-[#4299e1] transition-all bg-white text-[#0d1b3e] min-w-[200px]"
               >
-                <option value="">➕ New Exam</option>
+                <option value="">+ New Exam</option>
                 {Array.isArray(availableExams) && availableExams.length > 0 && <option disabled>──────────</option>}
                 {Array.isArray(availableExams) && availableExams.map((availableExam) => (
                   <option key={availableExam.id} value={availableExam.id}>
@@ -831,7 +924,6 @@ function ExamBuilderInner() {
         <div className="flex items-center gap-3 flex-wrap">
           <SaveIndicator />
           <ValidationBadge />
-          <PreviewModeToggle />
 
           {isEditorMode && (
             <>
@@ -849,6 +941,36 @@ function ExamBuilderInner() {
               >
                 {isSavingToDb ? 'Saving...' : (exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id)) ? 'Update Exam' : 'Save Exam'}
               </button>
+              
+              {/* Publish Button - Only HOST can publish */}
+              {exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && exam.questions.length > 0 && isOwner && !isExamPublished && (
+                <button
+                  onClick={() => {
+                    setCurrentExamId(exam.id || '');
+                    setShowPublishModal(true);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white text-sm font-semibold hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+                  title="Only the host (exam creator) can publish"
+                >
+                  <Sparkles className="w-4 h-4" /> Publish Exam
+                </button>
+              )}
+              
+              {/* Show "Exam Published" badge if published */}
+              {exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && isExamPublished && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 text-green-700 rounded-lg text-sm font-semibold">
+                  <Check className="w-4 h-4" />
+                  <span>Exam Published</span>
+                </div>
+              )}
+              
+              {/* Show message if not owner and not published */}
+              {exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && exam.questions.length > 0 && !isOwner && !isExamPublished && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm">
+                  <Info className="w-4 h-4" />
+                  <span>Only the host can publish this exam</span>
+                </div>
+              )}
               
               {/* Invite Collaborators Button - Only show for saved exams */}
               {exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && (
@@ -887,9 +1009,197 @@ function ExamBuilderInner() {
         </>
       )}
 
-      {/* Live Comments Floating Button - REMOVED (using sidebar instead) */}
+      {/* View Mode Tabs */}
+      {isEditorMode && (
+        <div className="flex items-center gap-2 mb-4 border-b border-gray-200">
+          <button
+            onClick={() => setViewMode("builder")}
+            className={`px-4 py-2 text-sm font-medium transition-all border-b-2 ${
+              viewMode === "builder"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Exam Builder
+          </button>
+          <button
+            onClick={() => setViewMode("ai-generated")}
+            className={`px-4 py-2 text-sm font-medium transition-all border-b-2 flex items-center gap-2 ${
+              viewMode === "ai-generated"
+                ? "border-purple-600 text-purple-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            AI-Generated Exams
+            {aiGeneratedExams.length > 0 && (
+              <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">
+                {aiGeneratedExams.length}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
 
-      {/* Collaboration Sidebar */}
+      {/* AI-Generated Exams View */}
+      {isEditorMode && viewMode === "ai-generated" && (
+        <div className="flex-1 overflow-auto">
+          <div className="max-w-6xl mx-auto p-6">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">AI-Generated Exams</h2>
+              <p className="text-gray-600">
+                Manage and publish your AI-generated exams to the marketplace
+              </p>
+            </div>
+
+            {loadingAIExams ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+              </div>
+            ) : aiGeneratedExams.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                <Sparkles className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600 mb-4">No AI-generated exams yet</p>
+                <button
+                  onClick={() => {
+                    setViewMode("builder");
+                    setShowAIWizard(true);
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all"
+                >
+                  Generate Your First Exam
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {aiGeneratedExams.map((aiExam) => (
+                  <div
+                    key={aiExam.id}
+                    className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Sparkles className="w-5 h-5 text-purple-600" />
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            {aiExam.title || 'Untitled Exam'}
+                          </h3>
+                        </div>
+                        
+                        <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
+                          <span>{aiExam.questions?.length || 0} questions</span>
+                          <span>•</span>
+                          <span>{aiExam.classLevel || 'No level'}</span>
+                          <span>•</span>
+                          <span>{aiExam.subject || 'No subject'}</span>
+                          {aiExam.questions?.length > 0 && (
+                            <>
+                              <span>•</span>
+                              <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                                <Brain className="w-3 h-3" />
+                                Interactive
+                              </span>
+                            </>
+                          )}
+                          {aiExam.isPublished && (
+                            <>
+                              <span>•</span>
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                aiExam.verificationStatus === 'approved'
+                                  ? 'bg-green-100 text-green-700'
+                                  : aiExam.verificationStatus === 'rejected'
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-yellow-100 text-yellow-700'
+                              }`}>
+                                {aiExam.verificationStatus === 'approved'
+                                  ? '✓ Approved'
+                                  : aiExam.verificationStatus === 'rejected'
+                                  ? '✗ Rejected'
+                                  : '⏳ Pending Review'}
+                              </span>
+                            </>
+                          )}
+                        </div>
+
+                        {aiExam.description && (
+                          <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                            {aiExam.description}
+                          </p>
+                        )}
+
+                        {aiExam.rejectionReason && (
+                          <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                            <p className="text-sm text-red-700">
+                              <strong>Rejection Reason:</strong> {aiExam.rejectionReason}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 ml-4">
+                        <button
+                          onClick={() => {
+                            loadExam(aiExam.id);
+                            setViewMode("builder"); // Switch to builder view
+                          }}
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit Exam"
+                        >
+                          <Pencil className="w-5 h-5" />
+                        </button>
+                        
+                        {!aiExam.isPublished && (
+                          <button
+                            onClick={() => {
+                              setCurrentExamId(aiExam.id);
+                              setShowPublishModal(true);
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all flex items-center gap-2"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                            Publish
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {aiExam.isPublished && aiExam.verificationStatus === 'approved' && (
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-6 text-sm text-gray-600">
+                            <div className="flex items-center gap-2">
+                              <Eye className="w-4 h-4" />
+                              <span>{aiExam.views || 0} views</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4" />
+                              <span>{aiExam.downloads || 0} downloads</span>
+                            </div>
+                            {aiExam.license === 'paid' && (
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-green-600">{aiExam.price} TND</span>
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => window.open(`/dashboard/exam-analytics/${aiExam.id}`, '_blank')}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                          >
+                            <BarChart3 className="w-4 h-4" />
+                            View Analytics
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Collaboration Section - Only show if there are collaborators (more than 1 user) */}
       {isEditorMode && exam.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(exam.id) && (
         <CollaborationSidebar 
           examId={currentExamId || exam.id}
@@ -914,15 +1224,17 @@ function ExamBuilderInner() {
         />
       )}
 
-      {/* Main panels */}
-      <div className="flex-1 flex gap-4 min-h-0">
-        {isEditorMode && <QuestionBank />}
-        <ExamPreview 
-          ref={previewRef} 
-          importedTemplate={importedTemplate} 
-          examId={currentExamId || exam.id || undefined}
-        />
-      </div>
+      {/* Main panels - Only show in builder mode */}
+      {viewMode === "builder" && (
+        <div className="flex-1 flex gap-4 min-h-0">
+          {isEditorMode && <QuestionBank />}
+          <ExamPreview 
+            ref={previewRef} 
+            importedTemplate={importedTemplate} 
+            examId={currentExamId || exam.id || undefined}
+          />
+        </div>
+      )}
       
       {/* WebSocket Debug Panel (Development only) */}
       {process.env.NODE_ENV === 'development' && exam.id && (

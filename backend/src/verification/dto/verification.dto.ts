@@ -30,6 +30,11 @@ export class SubmitVerificationDto {
   @IsOptional()
   @IsString()
   verificationCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  idNumber?: string;
 }
 
 export class ReviewVerificationDto {

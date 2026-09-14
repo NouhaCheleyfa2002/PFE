@@ -795,6 +795,8 @@ function SortableQuestionBlock({
   exam,
   totalPoints,
   examId,
+  startEditingElement,
+  stopEditingElement,
 }: {
   q: Question;
   index: number;
@@ -807,6 +809,8 @@ function SortableQuestionBlock({
   exam: any;
   totalPoints: number;
   examId?: string;
+  startEditingElement: (elementId: string, elementType: string) => void;
+  stopEditingElement: (elementId: string) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [showRubricGenerator, setShowRubricGenerator] = useState(false);
@@ -851,11 +855,15 @@ function SortableQuestionBlock({
   }, [socket, examId, q.id, onUpdate]);
 
   const handleStartEditing = () => {
+    console.log('[SortableQuestionBlock] handleStartEditing called for question:', q.id);
     setIsEditing(true);
     
     // Emit WebSocket event that user is now editing
     if (collaborativeQuestionRef.current) {
+      console.log('[SortableQuestionBlock] Calling collaborativeQuestionRef.startEditing()');
       collaborativeQuestionRef.current.startEditing();
+    } else {
+      console.warn('[SortableQuestionBlock] collaborativeQuestionRef.current is null!');
     }
   };
 
@@ -902,13 +910,19 @@ function SortableQuestionBlock({
     }
   };
 
-  // Empty handlers for CollaborativeQuestion (we don't need them)
+  // Handlers for CollaborativeQuestion - notify when editing starts/stops  
   const handleFocus = () => {
-    // No-op: We control editing via Edit button, not focus
+    // Notify collaborators through CollaborativeQuestion's methods
+    if (collaborativeQuestionRef.current) {
+      collaborativeQuestionRef.current.startEditing();
+    }
   };
 
   const handleBlur = () => {
-    // No-op: We control editing via Edit button, not blur
+    // Stop editing notification through CollaborativeQuestion's methods
+    if (collaborativeQuestionRef.current) {
+      collaborativeQuestionRef.current.stopEditing();
+    }
   };
 
   return (
@@ -916,8 +930,6 @@ function SortableQuestionBlock({
       examId={examId || exam.id || ''}
       questionIndex={index}
       questionId={q.id}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
       onEditingChange={(ref) => {
         collaborativeQuestionRef.current = ref;
       }}
@@ -933,8 +945,22 @@ function SortableQuestionBlock({
         </div>
       )}
       
-      {/* "Created by" badge if it's a new question */}
-      {isEditorMode && q.createdBy && !q.lastModifiedBy && (
+      {/* "Created by" badge if it's a new question - only show if different from current user (i.e., from a collaborator) */}
+      {isEditorMode && q.createdBy && !q.lastModifiedBy && (() => {
+        // Get current user name from token
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+        let currentUserName = '';
+        if (token) {
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            currentUserName = payload.fullName || payload.name || payload.username || '';
+          } catch (e) {
+            // Ignore parsing errors
+          }
+        }
+        // Only show if the question was added by someone else (a collaborator)
+        return q.createdBy !== currentUserName;
+      })() && (
         <div
           className="absolute -top-8 left-0 bg-green-50 text-green-700 text-xs px-3 py-1 rounded-full border border-green-200 shadow-sm z-20"
           title={`Created: ${q.createdAt ? new Date(q.createdAt).toLocaleString() : 'Unknown'}`}
@@ -1038,26 +1064,60 @@ function SortableQuestionBlock({
         />
       ) : (
         <>
-          {/* Question header */}
-          <p style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000", display: "flex", alignItems: "baseline", gap: 4 }}>
-            <span>Q{index + 1}.</span>
-            {q.type !== "image" && (
-              <span style={{ flex: 1 }}>
-                {q.text || (
-                  <em
-                    style={{ color: "#f59e0b", fontStyle: "normal", fontSize: 12 }}
-                    onClick={isEditorMode ? () => setIsEditing(true) : undefined}
-                  >
-                    ⚠ Click edit to add question text
-                  </em>
-                )}
+          {/* Question header - Professional format */}
+          <div style={{ 
+            marginBottom: 10,
+            padding: "8px 0",
+            borderBottom: "1px solid #e5e7eb"
+          }}>
+            <div style={{ 
+              display: "flex", 
+              alignItems: "flex-start", 
+              gap: 8,
+              marginBottom: 4
+            }}>
+              <span style={{ 
+                fontWeight: 700, 
+                fontSize: 14, 
+                color: "#000",
+                minWidth: 50,
+                flexShrink: 0
+              }}>
+                Q{index + 1}.
               </span>
-            )}
-            {q.type === "image" && <span style={{ flex: 1 }} />}
-            <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 11, flexShrink: 0 }}>
-              ({q.points} pt{q.points !== 1 ? "s" : ""})
-            </span>
-          </p>
+              {q.type !== "image" && (
+                <span style={{ 
+                  flex: 1,
+                  fontSize: 13,
+                  color: "#000",
+                  lineHeight: 1.6,
+                  fontWeight: 400
+                }}>
+                  {q.text || (
+                    <em
+                      style={{ color: "#f59e0b", fontStyle: "normal", fontSize: 12 }}
+                      onClick={isEditorMode ? () => setIsEditing(true) : undefined}
+                    >
+                      ⚠ Click edit to add question text
+                    </em>
+                  )}
+                </span>
+              )}
+              {q.type === "image" && <span style={{ flex: 1 }} />}
+              <span style={{ 
+                fontWeight: 600, 
+                color: "#374151", 
+                fontSize: 12, 
+                flexShrink: 0,
+                padding: "2px 8px",
+                backgroundColor: "#f3f4f6",
+                borderRadius: 4,
+                border: "1px solid #d1d5db"
+              }}>
+                [{q.points} {q.points === 1 ? "mark" : "marks"}]
+              </span>
+            </div>
+          </div>
 
           {/* Show image if present (for any question type) */}
           {q.imageUrl && q.type !== "image" && (
@@ -1157,6 +1217,8 @@ const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPr
     previewMode,
     validationErrors,
     totalPoints,
+    startEditingElement,
+    stopEditingElement,
   } = useExam();
 
   const isEditorMode = previewMode === "edit";
@@ -1463,7 +1525,7 @@ const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPr
             </div>
           )}
 
-          {/* Exam Title and Student Info Section - Toggleable */}
+          {/* Exam Title and Student Info Section - Realistic Tunisian Format */}
           <div style={{ position: "relative", marginTop: selectedTemplate ? 0 : 20 }}>
             {/* Hide/Show Button (Edit Mode Only) */}
             {isEditorMode && (
@@ -1492,141 +1554,200 @@ const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPr
               </button>
             )}
             <div id="exam-info-section">
-              {/* Exam Title */}
-              <div style={{ borderTop: selectedTemplate ? "1px solid #ddd" : "2px solid #000", paddingTop: 10, marginTop: selectedTemplate ? 10 : 0, paddingBottom: 14, marginBottom: 20 }}>
+              {/* Exam Header Box - Realistic Format */}
+              <div style={{ 
+                border: "2px solid #000", 
+                padding: "12px 16px", 
+                marginBottom: 20,
+                backgroundColor: "#fff"
+              }}>
+                {/* Top Row: Level, Subject, Date */}
+                <div style={{ 
+                  display: "flex", 
+                  justifyContent: "space-between", 
+                  fontSize: 12, 
+                  fontWeight: 600,
+                  marginBottom: 8,
+                  paddingBottom: 8,
+                  borderBottom: "1px solid #000"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontWeight: 700 }}>Level:</span>
+                    {isEditorMode ? (
+                      <input
+                        value={exam.classLevel || ""}
+                        onChange={(e) => setClassLevel(e.target.value as any)}
+                        placeholder="e.g., 3rd Year Secondary"
+                        style={{
+                          width: 180,
+                          backgroundColor: "transparent",
+                          outline: "none",
+                          borderBottom: "1px dashed #9ca3af",
+                          fontSize: 12,
+                          fontWeight: 600,
+                        }}
+                      />
+                    ) : (
+                      <span>{exam.classLevel || "_______________"}</span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontWeight: 700 }}>Subject:</span>
+                    {isEditorMode ? (
+                      <input
+                        value={exam.subject || ""}
+                        onChange={(e) => setSubject(e.target.value)}
+                        placeholder="e.g., Mathematics"
+                        style={{
+                          width: 140,
+                          backgroundColor: "transparent",
+                          outline: "none",
+                          borderBottom: "1px dashed #9ca3af",
+                          fontSize: 12,
+                          fontWeight: 600,
+                        }}
+                      />
+                    ) : (
+                      <span>{exam.subject || "_______________"}</span>
+                    )}
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 700 }}>Date:</span> _______________
+                  </div>
+                </div>
+
+                {/* Exam Title - Centered & Bold */}
+                <div style={{ textAlign: "center", margin: "16px 0" }}>
+                  {isEditorMode ? (
+                    <input
+                      value={exam.title || ""}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="EXAM TITLE (e.g., FIRST SEMESTER EXAMINATION)"
+                      style={{
+                        textAlign: "center",
+                        fontSize: 16,
+                        fontWeight: 700,
+                        width: "100%",
+                        backgroundColor: "transparent",
+                        outline: "none",
+                        border: "none",
+                        color: "#000",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.5px",
+                      }}
+                    />
+                  ) : (
+                    <h2 style={{ 
+                      fontSize: 16, 
+                      fontWeight: 700, 
+                      margin: 0, 
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px"
+                    }}>
+                      {exam.title || "EXAMINATION"}
+                    </h2>
+                  )}
+                </div>
+
+                {/* Bottom Row: Student Info & Duration */}
+                <div style={{ 
+                  display: "flex", 
+                  justifyContent: "space-between", 
+                  alignItems: "flex-start",
+                  fontSize: 12,
+                  paddingTop: 8,
+                  borderTop: "1px solid #000"
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700 }}>Student Name:</span> _______________________________________
+                    </div>
+                    <div>
+                      <span style={{ fontWeight: 700 }}>Class Number:</span> _______________
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", minWidth: 200 }}>
+                    <div style={{ marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700 }}>Duration:</span>
+                      {isEditorMode ? (
+                        <input
+                          value={exam.duration || ""}
+                          onChange={(e) => setDuration(e.target.value)}
+                          placeholder="e.g., 2 hours"
+                          style={{
+                            width: 80,
+                            backgroundColor: "transparent",
+                            outline: "none",
+                            borderBottom: "1px dashed #9ca3af",
+                            marginLeft: 4,
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        />
+                      ) : (
+                        <span style={{ marginLeft: 4, fontWeight: 600 }}>{exam.duration || "___________"}</span>
+                      )}
+                    </div>
+                    <div>
+                      <span style={{ fontWeight: 700 }}>Total Points:</span>
+                      <span style={{ marginLeft: 4, fontWeight: 700, fontSize: 14 }}>
+                        {(() => {
+                          const total = exam.questions.reduce((s, q) => s + (q.points || 0), 0);
+                          return Number.isInteger(total) ? total : total.toFixed(1);
+                        })()}
+                      </span> / 20
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Instructions Section */}
+              <div style={{ 
+                marginBottom: 20, 
+                padding: "10px 14px", 
+                backgroundColor: "#f9f9f9",
+                border: "1px solid #ddd",
+                borderRadius: 4
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6, textTransform: "uppercase" }}>
+                  Instructions:
+                </div>
                 {isEditorMode ? (
-                  <input
-                    value={exam.title || ""}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Exam Title"
+                  <textarea
+                    value={exam.instructions || ""}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    placeholder="• Read all questions carefully before answering.&#10;• Answer all questions on the answer sheet provided.&#10;• Show all your work for partial credit.&#10;• No calculators or reference materials allowed unless specified."
+                    rows={3}
                     style={{
-                      textAlign: "center",
-                      fontSize: selectedTemplate ? 16 : 20,
-                      fontWeight: selectedTemplate ? 600 : 700,
                       width: "100%",
+                      fontSize: 11,
+                      color: "#333",
                       backgroundColor: "transparent",
                       outline: "none",
+                      resize: "vertical",
                       border: "none",
-                      color: "#000",
+                      fontFamily: "inherit",
+                      lineHeight: 1.5,
                     }}
                   />
                 ) : (
-                  <h2 style={{ fontSize: selectedTemplate ? 16 : 20, fontWeight: selectedTemplate ? 600 : 700, margin: 0, textAlign: "center" }}>{exam.title}</h2>
+                  exam.instructions ? (
+                    <p style={{ 
+                      fontSize: 11, 
+                      color: "#333", 
+                      margin: 0,
+                      lineHeight: 1.6,
+                      whiteSpace: "pre-line"
+                    }}>
+                      {exam.instructions}
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: 11, color: "#999", margin: 0, fontStyle: "italic" }}>
+                      No specific instructions provided.
+                    </p>
+                  )
                 )}
               </div>
-              
-              <div style={{ marginTop: 14 }}>
-            <div
-              style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}
-            >
-              <span>Name: ____________________________</span>
-              <span>Date: _______________</span>
-            </div>
-
-            <div
-              style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span>Duration:</span>
-                {isEditorMode ? (
-                  <input
-                    value={exam.duration || ""}
-                    onChange={(e) => setDuration(e.target.value)}
-                    placeholder="60 min"
-                    style={{
-                      width: 72,
-                      backgroundColor: "transparent",
-                      outline: "none",
-                      borderBottom: "1px dashed #9ca3af",
-                      textAlign: "center",
-                      fontSize: 13,
-                    }}
-                  />
-                ) : (
-                  <span style={{ marginLeft: 4 }}>{exam.duration || "—"}</span>
-                )}
-              </div>
-              <span>
-                Total: {(() => {
-                  const total = exam.questions.reduce((s, q) => s + (q.points || 0), 0);
-                  return Number.isInteger(total) ? total : total.toFixed(1);
-                })()} points
-              </span>
-            </div>
-
-            {/* Class Level and Subject */}
-            <div
-              style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13 }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span>Level:</span>
-                {isEditorMode ? (
-                  <input
-                    value={exam.classLevel || ""}
-                    onChange={(e) => setClassLevel(e.target.value as any)}
-                    placeholder="e.g., 3rd Secondary"
-                    style={{
-                      width: 140,
-                      backgroundColor: "transparent",
-                      outline: "none",
-                      borderBottom: "1px dashed #9ca3af",
-                      textAlign: "center",
-                      fontSize: 13,
-                    }}
-                  />
-                ) : (
-                  <span style={{ marginLeft: 4 }}>{exam.classLevel || "—"}</span>
-                )}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span>Subject:</span>
-                {isEditorMode ? (
-                  <input
-                    value={exam.subject || ""}
-                    onChange={(e) => setSubject(e.target.value)}
-                    placeholder="e.g., Mathematics"
-                    style={{
-                      width: 120,
-                      backgroundColor: "transparent",
-                      outline: "none",
-                      borderBottom: "1px dashed #9ca3af",
-                      textAlign: "center",
-                      fontSize: 13,
-                    }}
-                  />
-                ) : (
-                  <span style={{ marginLeft: 4 }}>{exam.subject || "—"}</span>
-                )}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10, textAlign: "left" }}>
-              {isEditorMode ? (
-                <textarea
-                  value={exam.instructions || ""}
-                  onChange={(e) => setInstructions(e.target.value)}
-                  placeholder="Instructions: Read all questions carefully before answering…"
-                  rows={2}
-                  style={{
-                    width: "100%",
-                    fontSize: 12,
-                    fontStyle: "italic",
-                    color: "#4b5563",
-                    backgroundColor: "transparent",
-                    outline: "none",
-                    resize: "none",
-                    border: "none",
-                  }}
-                />
-              ) : (
-                exam.instructions && (
-                  <p style={{ fontSize: 12, fontStyle: "italic", color: "#4b5563", margin: 0 }}>
-                    {exam.instructions}
-                  </p>
-                )
-              )}
-            </div>
-            </div>
             </div>
           </div>
 
@@ -1673,6 +1794,8 @@ const ExamPreview = forwardRef<HTMLDivElement, ExamPreviewProps>(function ExamPr
                     exam={exam}
                     totalPoints={totalPoints}
                     examId={examId}
+                    startEditingElement={startEditingElement}
+                    stopEditingElement={stopEditingElement}
                   />
                 ))}
               </SortableContext>

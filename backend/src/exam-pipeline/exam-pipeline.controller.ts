@@ -40,11 +40,12 @@ export class ExamPipelineController {
    */
   @Get()
   async getAllQuestions(@Query() paginationDto: PaginationDto) {
-    const { page, limit, topic, difficulty } = paginationDto;
+    const { page, limit, topic, difficulty, sourceType } = paginationDto;
 
     const result = await this.pipelineService.findAll(page, limit, {
       topic,
       difficulty,
+      sourceType,
     });
 
     return {

@@ -12,16 +12,20 @@ import { ExamQuestionEntity } from '../exam-pipeline/entities/exam-question.enti
 import { AiModule } from '../ai/ai.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { UserNotificationsModule } from '../user-notifications/user-notifications.module';
+import { MailModule } from '../mail/mail.module';
 import { PDFDiagramExtractorService } from '../exam-pipeline/pdf-diagram-extractor.service';
 import { AIDiagramDetectorService } from '../exam-pipeline/ai-diagram-detector.service';
 import { PDFLayoutAnalyzerService } from '../exam-pipeline/pdf-layout-analyzer.service';
+import { ExamsModule } from '../exams/exams.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DocumentModerationEntity, DocumentEntity, ExamQuestionEntity]),
     forwardRef(() => AiModule), // Use forwardRef to resolve circular dependency
     forwardRef(() => DocumentsModule),
+    forwardRef(() => ExamsModule), // Import ExamsModule for exam moderation
     UserNotificationsModule,
+    MailModule,
   ],
   controllers: [ModerationController],
   providers: [

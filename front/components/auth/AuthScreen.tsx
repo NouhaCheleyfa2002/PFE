@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Sparkles, IdCard, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { authService } from "@/lib/auth";
+import toast from "react-hot-toast";
 
 /* ── types ── */
 type Mode = "login" | "register";
@@ -113,26 +114,36 @@ function GhostBtn({ children, onClick }: { children: React.ReactNode; onClick?: 
   );
 }
 
-function StepIndicator({ current }: { current: number }) {
+function StepIndicator({ current, role }: { current: number; role: Role }) {
+  // Students only have 2 steps (skip institution info)
+  const totalSteps = role === "student" ? 2 : 3;
+  const steps = role === "student" ? [1, 3] : [1, 2, 3]; // Map visual steps to actual step numbers
+  
   return (
     <div className="flex items-center gap-2 mb-6">
-      {[1, 2, 3].map((n) => (
-        <React.Fragment key={n}>
-          <div
-            className={[
-              "w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold transition-all",
-              n < current   ? "bg-[#63b3ed] text-white"  :
-              n === current ? "bg-[#0d1b3e] text-white"  :
+      {steps.map((stepNum, index) => {
+        const visualStep = index + 1;
+        const isComplete = stepNum < current;
+        const isCurrent = stepNum === current;
+        
+        return (
+          <React.Fragment key={stepNum}>
+            <div
+              className={[
+                "w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold transition-all",
+                isComplete  ? "bg-[#63b3ed] text-white"  :
+                isCurrent   ? "bg-[#0d1b3e] text-white"  :
                               "bg-[#e8ecf4] text-[#8899bb]",
-            ].join(" ")}
-          >
-            {n < current ? <Check className="w-4 h-4" /> : n}
-          </div>
-          {n < 3 && (
-            <div className={["flex-1 h-0.5 rounded transition-colors", n < current ? "bg-[#63b3ed]" : "bg-[#e8ecf4]"].join(" ")} />
-          )}
-        </React.Fragment>
-      ))}
+              ].join(" ")}
+            >
+              {isComplete ? <Check className="w-4 h-4" /> : visualStep}
+            </div>
+            {index < steps.length - 1 && (
+              <div className={["flex-1 h-0.5 rounded transition-colors", isComplete ? "bg-[#63b3ed]" : "bg-[#e8ecf4]"].join(" ")} />
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -143,10 +154,25 @@ export default function AuthScreen() {
   const [mode, setMode] = useState<Mode>("login");
   const [role, setRole] = useState<Role>("teacher");
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ email: "", password: "", fullName: "", university: "", specialty: "", region: "" });
+  const [form, setForm] = useState({ email: "", password: "", confirmPassword: "", fullName: "", university: "", specialty: "", region: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [hasTypeParam, setHasTypeParam] = useState(false);
+
+  // Read URL params to determine user type
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const type = params.get('type');
+    const hasType = params.has('type');
+    setHasTypeParam(hasType);
+    
+    if (type === 'student') {
+      setRole('student');
+    } else if (type === 'teacher') {
+      setRole('teacher');
+    }
+  }, []);
 
   // Helper function for password strength
   const getPasswordStrength = (password: string): number => {
@@ -182,12 +208,8 @@ export default function AuthScreen() {
         password: form.password,
       });
       
-      // Redirect based on role
-      if (result.user.role === "student") {
-        router.push("/student/library");
-      } else {
-        router.push("/dashboard");
-      }
+      // All users go to /dashboard - it will show the appropriate view based on role
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -216,13 +238,14 @@ export default function AuthScreen() {
         specialty: form.specialty,
       });
       
-      // Redirect to dashboard - teachers can verify later
-      if (result.user.role === "student") {
-        router.push("/student/library");
-      } else {
-        // Teacher goes to dashboard, can verify from profile
-        router.push("/dashboard");
-      }
+      // Show welcome email toast
+      toast.success("✅ Welcome! A confirmation email has been sent to your inbox", {
+        duration: 5000,
+        icon: "📧",
+      });
+      
+      // All users go to /dashboard - it will show the appropriate view based on role
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -236,28 +259,15 @@ export default function AuthScreen() {
       <h2 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-[28px] font-bold text-[#0d1b3e] mb-1">
         Welcome back
       </h2>
-      <p className="text-[14px] text-[#8899bb] mb-8">Sign in to your account</p>
+      <p className="text-[14px] text-[#8899bb] mb-8">
+        Sign in as {role === "teacher" ? "Educator" : "Student"}
+      </p>
 
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
           {error}
         </div>
       )}
-
-      <div className="flex p-1 rounded-[10px] bg-[#e8ecf4] mb-7">
-        {(["teacher", "student"] as Role[]).map((r) => (
-          <button
-            key={r}
-            onClick={() => setRole(r)}
-            className={[
-              "flex-1 py-2 rounded-[7px] text-[14px] font-medium transition-all",
-              role === r ? "bg-white text-[#0d1b3e] shadow-sm" : "text-[#8899bb]",
-            ].join(" ")}
-          >
-            {r === "teacher" ? "Educator" : "Student"}
-          </button>
-        ))}
-      </div>
 
       <div className="mb-4"><Label>Email address</Label><Input type="email" placeholder="prof@university.tn" value={form.email} onChange={set("email")} /></div>
       <div className="mb-4"><Label>Password</Label><Input type="password" placeholder="••••••••" value={form.password} onChange={set("password")} /></div>
@@ -268,7 +278,24 @@ export default function AuthScreen() {
         <span className="flex-1 h-px bg-[#e8ecf4]" /> or <span className="flex-1 h-px bg-[#e8ecf4]" />
       </div>
 
-      <p className="text-center text-[13px] text-[#8899bb]">
+      {/* Google OAuth Button */}
+      <button
+        onClick={() => window.location.href = 'http://localhost:3000/auth/google'}
+        className="w-full py-3 rounded-[10px] border-[1.5px] border-[#dde2ef] bg-white
+                   text-[14px] font-medium text-[#0d1b3e] flex items-center justify-center gap-2.5
+                   hover:border-[#63b3ed] hover:bg-[rgba(99,179,237,0.02)] hover:-translate-y-px
+                   hover:shadow-[0_4px_12px_rgba(13,27,62,0.1)] transition-all"
+      >
+        <svg className="w-5 h-5" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        </svg>
+        Continue with Google
+      </button>
+
+      <p className="text-center text-[13px] text-[#8899bb] mt-5">
         Don't have an account?{" "}
         <button onClick={() => { setMode("register"); setStep(1); setError(null); }} className="text-[#63b3ed] font-semibold bg-transparent border-0 cursor-pointer">
           Create one
@@ -280,22 +307,26 @@ export default function AuthScreen() {
   /* ── REGISTER ── */
   const Step1 = (
     <>
-      <div className="grid grid-cols-2 gap-2.5 mb-5">
-        {(["teacher", "student"] as Role[]).map((r) => (
-          <div
-            key={r}
-            onClick={() => setRole(r)}
-            className={[
-              "border-2 rounded-[10px] p-3.5 cursor-pointer transition-all bg-white",
-              role === r ? "border-[#63b3ed] bg-[rgba(99,179,237,0.05)]" : "border-[#dde2ef] hover:border-[#b0c0d8]",
-            ].join(" ")}
-          >
-        
-            <div className="text-[13px] font-semibold text-[#0d1b3e]">{r === "teacher" ? "Educator" : "Student"}</div>
-            <div className="text-[11px] text-[#8899bb] mt-0.5">{r === "teacher" ? "Upload & create exams" : "Access resources"}</div>
-          </div>
-        ))}
-      </div>
+      {/* Only show role selector if no type was specified in URL */}
+      {!hasTypeParam && (
+        <div className="grid grid-cols-2 gap-2.5 mb-5">
+          {(["teacher", "student"] as Role[]).map((r) => (
+            <div
+              key={r}
+              onClick={() => setRole(r)}
+              className={[
+                "border-2 rounded-[10px] p-3.5 cursor-pointer transition-all bg-white",
+                role === r ? "border-[#63b3ed] bg-[rgba(99,179,237,0.05)]" : "border-[#dde2ef] hover:border-[#b0c0d8]",
+              ].join(" ")}
+            >
+          
+              <div className="text-[13px] font-semibold text-[#0d1b3e]">{r === "teacher" ? "Educator" : "Student"}</div>
+              <div className="text-[11px] text-[#8899bb] mt-0.5">{r === "teacher" ? "Upload & create exams" : "Access resources"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      
       <div className="mb-4"><Label>Full Name</Label><Input placeholder="Dr. Amira Ben Ali" value={form.fullName} onChange={set("fullName")} /></div>
       <div className="mb-4"><Label>Email</Label><Input type="email" placeholder="you@university.tn" value={form.email} onChange={set("email")} /></div>
       
@@ -394,6 +425,24 @@ export default function AuthScreen() {
           </div>
         )}
       </div>
+
+      {/* Confirm Password Field */}
+      <div className="mb-4">
+        <Label>Confirm Password</Label>
+        <Input type="password" placeholder="••••••••" value={form.confirmPassword} onChange={set("confirmPassword")} />
+        {form.confirmPassword && form.password !== form.confirmPassword && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-red-600">
+            <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>Passwords do not match</span>
+          </div>
+        )}
+        {form.confirmPassword && form.password === form.confirmPassword && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-green-600">
+            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>Passwords match</span>
+          </div>
+        )}
+      </div>
       
       <PrimaryBtn 
         onClick={() => {
@@ -401,10 +450,19 @@ export default function AuthScreen() {
             setError("Please ensure your password meets all requirements");
             return;
           }
+          if (form.password !== form.confirmPassword) {
+            setError("Passwords do not match");
+            return;
+          }
           setError(null);
-          setStep(2);
+          // Students skip Step 2 (institution info) and go straight to Step 3 (confirmation)
+          if (role === "student") {
+            setStep(3);
+          } else {
+            setStep(2);
+          }
         }}
-        disabled={!form.fullName || !form.email || !isPasswordValid(form.password)}
+        disabled={!form.fullName || !form.email || !isPasswordValid(form.password) || !form.confirmPassword || form.password !== form.confirmPassword}
       >
         Continue →
       </PrimaryBtn>
@@ -493,14 +551,45 @@ export default function AuthScreen() {
       <PrimaryBtn onClick={handleRegister} loading={loading}>
         Go to Library →
       </PrimaryBtn>
+      <GhostBtn onClick={() => setStep(1)}>← Back</GhostBtn>
     </div>
   );
 
   const RegisterView = (
     <>
       <h2 style={{ fontFamily: "var(--font-heading), sans-serif" }} className="text-[28px] font-bold text-[#0d1b3e] mb-1">Create account</h2>
-      <p className="text-[14px] text-[#8899bb] mb-6">Join the educator community</p>
-      <StepIndicator current={step} />
+      <p className="text-[14px] text-[#8899bb] mb-6">
+        {hasTypeParam 
+          ? `Join as ${role === "teacher" ? "Educator" : "Student"}` 
+          : "Join the educator community"}
+      </p>
+      
+      {/* Show Google OAuth button only on Step 1 */}
+      {step === 1 && (
+        <>
+          <button
+            onClick={() => window.location.href = 'http://localhost:3000/auth/google'}
+            className="w-full py-3 rounded-[10px] border-[1.5px] border-[#dde2ef] bg-white
+                       text-[14px] font-medium text-[#0d1b3e] flex items-center justify-center gap-2.5 mb-4
+                       hover:border-[#63b3ed] hover:bg-[rgba(99,179,237,0.02)] hover:-translate-y-px
+                       hover:shadow-[0_4px_12px_rgba(13,27,62,0.1)] transition-all"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Continue with Google
+          </button>
+          
+          <div className="flex items-center gap-3 my-5 text-[12px] text-[#c0c8d8]">
+            <span className="flex-1 h-px bg-[#e8ecf4]" /> or <span className="flex-1 h-px bg-[#e8ecf4]" />
+          </div>
+        </>
+      )}
+      
+      <StepIndicator current={step} role={role} />
       {step === 1 && Step1}
       {step === 2 && Step2}
       {step === 3 && Step3}
