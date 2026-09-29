@@ -1,6 +1,6 @@
 "# PFE - EduShare Platform
 
-## 🎓 About
+##  About
 
 EduShare is a collaborative educational platform for Tunisian universities that enables:
 - Role-based access (Admin, Teacher, Student)
@@ -8,31 +8,28 @@ EduShare is a collaborative educational platform for Tunisian universities that 
 - Exam building and question management
 - Resource sharing across institutions
 
-## 🚀 New Features
+##  Features
 
 ### 1. Document Processing Pipeline with OCR
 
 A complete **PDF document processing pipeline** with automatic OCR has been implemented!
 
 **Features:**
-✅ Multi-file PDF upload
-✅ Automatic OCR processing (Azure AI Document Intelligence)
-✅ FIFO queue processing
-✅ Real-time status updates
-✅ JSON results storage
-✅ Complete REST API
+- Multi-file PDF upload
+- Automatic OCR processing (Azure AI Document Intelligence)
+- FIFO queue processing
+- Real-time status updates
+- JSON results storage
+- Complete REST API
 
 ### 2. DeepSeek AI Integration
 
-**AI-powered features** integrated into the platform!
-
-**Features:**
-✅ Chat with AI assistant
-✅ Text summarization
-✅ Multi-language translation
-✅ Professional email generation
-✅ JWT-protected endpoints
-✅ Complete error handling
+- Chat with AI assistant
+-  Text summarization
+- Multi-language translation
+- Professional email generation
+- JWT-protected endpoints
+- Complete error handling
 
 **Quick Start:**
 ```bash
@@ -46,9 +43,7 @@ POST /ai/translate
 POST /ai/generate-email
 ```
 
-📚 **Documentation:** See `backend/AI_QUICK_START.md`
-
-### 3. Exam Processing Pipeline (NEW!)
+### 3. Exam Processing Pipeline
 
 **Complete end-to-end pipeline** for automatic exam question extraction!
 
@@ -58,14 +53,14 @@ PDF Upload → OCR → DeepSeek AI Parsing → Vector Embeddings → pgvector St
 ```
 
 **Features:**
-✅ Automatic question extraction from exam PDFs
-✅ AI-powered parsing with DeepSeek
-✅ Vector embeddings with BAAI/bge-m3 (local, no API costs)
-✅ Semantic search with pgvector
-✅ Topic and difficulty classification
-✅ Multiple choice question support
-✅ Document-to-questions linking
-✅ Reprocessing capability
+- Automatic question extraction from exam PDFs
+- AI-powered parsing with DeepSeek
+- Vector embeddings with BAAI/bge-m3 (local, no API costs)
+- Semantic search with pgvector
+- Topic and difficulty classification
+- Multiple choice question support
+- Document-to-questions linking
+- Reprocessing capability
 
 **API Endpoints:**
 ```bash
@@ -100,22 +95,6 @@ POST /exam-questions/search
 }
 ```
 
-📚 **Documentation:** See `backend/EXAM_PIPELINE_QUICK_START.md`
-
-### Quick Start
-```bash
-# 1. Start infrastructure
-docker-compose up -d
-
-# 2. Start backend
-cd backend && npm install && npm run start:dev
-
-# 3. Start frontend  
-cd front && npm install && npm run dev
-
-# 4. Open browser
-http://localhost:3001/dashboard/documents
-```
 
 ### Infrastructure
 - **Docker** - Containerization
@@ -160,11 +139,6 @@ npm run dev
 
 ### Default Credentials
 
-**Admin Account:**
-- Email: `admin@example.com`
-- Password: `SuperSecret123`
-- Role: Administrator
-
 **Teacher Account:**
 - Email: `teacher@university.tn`
 - Password: `Teacher123`
@@ -172,9 +146,9 @@ npm run dev
 - Name: Dr. Sarah Khalil
 - University: Faculty of Medicine, Tunis
 
-## 📚 Features
+## Features
 
-### ✅ Implemented
+### Implemented
 - **Authentication**: JWT-based with role management
 - **Document Processing**: PDF upload with OCR extraction
 - **File Storage**: SeaweedFS distributed storage
@@ -182,15 +156,13 @@ npm run dev
 - **Admin Panel**: User management and worker monitoring
 - **Background Jobs**: BullMQ queue processing
 - **Real-time Updates**: Auto-refresh document status
-
-### 🔮 Coming Soon
 - Database integration (PostgreSQL)
 - AI question generation
 - Exam builder interface
 - Analytics dashboard
 - Semantic search
 
-## 🎯 User Roles
+## User Roles
 
 ### Admin
 - Manage users
@@ -209,40 +181,9 @@ npm run dev
 - View assignments
 - Submit work
 
-## 📖 API Documentation
-
-### Authentication
-```bash
-POST /auth/register  # Register new user
-POST /auth/login     # Login
-GET  /auth/me        # Get current user
 ```
 
-### Documents (NEW!)
-```bash
-POST /documents/upload              # Upload PDFs
-GET  /documents                     # Get my documents
-GET  /documents/:id                 # Get document details
-GET  /documents/:id/ocr-result      # Get OCR result
-GET  /documents/stats               # Get statistics
-GET  /documents/processing-status   # Get worker status
-```
-
-### Questions
-```bash
-GET /questions           # Get all questions
-GET /questions/:id       # Get question by ID
-GET /questions/categories # Get categories
-```
-
-### Upload
-```bash
-POST /upload            # Upload file to SeaweedFS
-GET  /upload/:fid       # Get file URL
-DELETE /upload/:fid     # Delete file
-```
-
-## 🧪 Testing
+## Testing
 
 ### Run Backend Tests
 ```bash
@@ -263,7 +204,7 @@ bash test-document-pipeline.sh
 4. Watch it process automatically
 5. View OCR results
 
-## 📊 Monitoring
+## Monitoring
 
 ### Backend Logs
 ```bash
@@ -297,7 +238,7 @@ SEAWEED_FILER_URL=http://localhost:8888
 ```
 
 
-## 📝 Development
+## Development
 
 ### Backend Development
 ```bash
@@ -316,7 +257,3 @@ npm run start        # Run production build
 ```
 
 
-
----
-
-**For detailed documentation on the document processing pipeline, see [README_DOCUMENT_PIPELINE.md](README_DOCUMENT_PIPELINE.md)**" 
